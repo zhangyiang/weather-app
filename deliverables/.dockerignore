@@ -1,0 +1,15 @@
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/._*
+**/~$*
+backend/__pycache__
+backend/......_srv.log
+backend/_test_weather.py
+html-prototype/_gen_districts.py
+html-prototype/_gen_icons.py
+html-prototype/test_data.js
+.git
+.gitignore
+deploy
+*.md

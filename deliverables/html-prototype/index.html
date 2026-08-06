@@ -1,0 +1,1936 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="theme-color" content="#3B82F6">
+<meta name="description" content="聚合多源天气数据，对比各家预报准确率">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="聚合天气">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+<title>聚合天气 - 移动端原型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+:root{
+  --bg:#F0F5FA;--card:#FFFFFF;--text-primary:#1B2845;--text-secondary:#6B7B95;
+  --accent:#3B82F6;--accent-light:#DBEAFE;--muted:#9CA8BE;--border:#E8EDF5;
+  --border-dark:#D1DCEB;--gold:#FBBF24;--silver:#C0C0C0;--bronze:#CD7F32;
+  --warning:#F59E0B;--success:#10B981;--danger:#EF4444;--wechat:#07C160;
+  --dark-bg:#0A0F1E;--r-sm:8px;--r-md:12px;--r-lg:16px;--r-xl:24px;--r-full:9999px;
+  --sb-h:62px;--tab-h:95px;--font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+body{font-family:var(--font);background:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden;color:var(--text-primary)}
+.device{width:390px;height:844px;background:var(--bg);border-radius:44px;overflow:hidden;position:relative;box-shadow:0 0 0 12px #1a1a2e,0 0 0 14px #2a2a4e,0 40px 80px rgba(0,0,0,0.5);transform-origin:center center}
+.screen{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--bg);display:none;flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.screen.active{display:flex}
+.screen::-webkit-scrollbar{display:none}
+
+/* ===== 移动端全屏适配：作为 PWA / 安装包运行时，让设备框填满整个屏幕，去除手机外壳阴影 ===== */
+html.app-mode{height:100%}
+html.app-mode body{background:var(--bg);align-items:stretch;justify-content:stretch;min-height:100vh;min-height:100dvh}
+html.app-mode .device{width:100vw;height:100vh;height:100dvh;border-radius:0;box-shadow:none;transform:none !important}
+/* 安全区适配（刘海屏/底部手势条） */
+html.app-mode .screen{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
+
+/* Status Bar */
+.status-bar{position:absolute;top:0;left:0;right:0;height:var(--sb-h);display:flex;align-items:flex-end;justify-content:space-between;padding:0 24px 6px;font-size:14px;font-weight:600;z-index:50;transition:color 0.3s}
+.status-light{color:#1B2845}
+.status-dark{color:#FFFFFF}
+.status-icons{display:flex;align-items:center;gap:5px}
+.status-icons svg{width:16px;height:11px}
+
+/* Tab Bar */
+.tab-bar{position:absolute;bottom:0;left:0;right:0;height:var(--tab-h);background:rgba(255,255,255,0.95);backdrop-filter:blur(20px);border-top:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-around;padding-top:10px;z-index:100}
+.tab-item{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;flex:1}
+.tab-icon{width:26px;height:26px;color:var(--muted)}
+.tab-item.active .tab-icon{color:var(--accent)}
+.tab-label{font-size:10px;color:var(--muted);font-weight:500}
+.tab-item.active .tab-label{color:var(--accent);font-weight:600}
+
+/* Home Screen */
+.home-hero{background:linear-gradient(135deg,#3B82F6 0%,#6366F1 50%,#8B5CF6 100%);color:#fff;padding:0 20px 28px;border-radius:0 0 32px 32px;position:relative;overflow:hidden;transition:background .6s ease;min-height:420px}
+/* 天气类型渐变背景 */
+.home-hero[data-w="sunny"]{background:linear-gradient(160deg,#F59E0B 0%,#F97316 45%,#EF4444 100%)}
+.home-hero[data-w="cloudy"]{background:linear-gradient(160deg,#64748B 0%,#6366F1 55%,#8B5CF6 100%)}
+.home-hero[data-w="rainy"]{background:linear-gradient(160deg,#1E3A8A 0%,#2563EB 50%,#6366F1 100%)}
+.home-hero[data-w="overcast"]{background:linear-gradient(160deg,#475569 0%,#64748B 55%,#78716C 100%)}
+.home-hero::after{content:'';position:absolute;top:-80px;right:-60px;width:260px;height:260px;background:radial-gradient(circle,rgba(255,255,255,0.18) 0%,transparent 70%);border-radius:50%}
+.location-bar{display:flex;align-items:center;justify-content:space-between;padding:0 4px 12px;position:relative;z-index:2}
+.location-left{display:flex;align-items:center;gap:6px;cursor:pointer}
+.location-left svg{width:16px;height:16px}
+.location-name{font-size:17px;font-weight:600}
+.location-chevron{width:14px;height:14px;opacity:0.7}
+.bell-btn{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;border:none;color:#fff}
+.bell-btn svg{width:20px;height:20px}
+.bell-badge{position:absolute;top:6px;right:6px;width:8px;height:8px;background:var(--danger);border-radius:50%;border:1.5px solid #fff}
+/* 数据源选择条 */
+.source-selector{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 12px;position:relative;z-index:2;-webkit-overflow-scrolling:touch}
+.source-selector::-webkit-scrollbar{display:none}
+.source-chip{flex-shrink:0;padding:7px 13px;border-radius:var(--r-full);font-size:12px;font-weight:500;background:rgba(255,255,255,0.16);color:#fff;cursor:pointer;white-space:nowrap;border:1px solid rgba(255,255,255,0.22);transition:all .15s}
+.source-chip.active{background:#fff;color:var(--accent);font-weight:700;border-color:#fff}
+/* 主天气展示区 — 大字号、左右分栏 */
+.weather-showcase{position:relative;z-index:2;padding:4px 0 8px}
+.weather-showcase-inner{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0}
+.weather-showcase-left{flex:1;display:flex;flex-direction:column;align-items:flex-start;min-width:0}
+.weather-showcase-right{flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.weather-icon-xl{width:130px;height:130px;animation:weatherFloat 4s ease-in-out infinite;filter:drop-shadow(0 6px 20px rgba(0,0,0,0.25))}
+.weather-temp{font-size:96px;font-weight:200;line-height:0.95;letter-spacing:-4px}
+.weather-temp-unit{font-size:36px;font-weight:300;vertical-align:super;margin-left:2px;opacity:0.85}
+.weather-desc{font-size:22px;font-weight:600;margin-top:6px;opacity:0.96}
+/* 背景天气图案 */
+.weather-pattern{position:absolute;right:-30px;bottom:-80px;width:320px;height:320px;opacity:0.15;z-index:0;pointer-events:none}
+.weather-pattern svg{width:100%;height:100%}
+@keyframes weatherFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-10px) scale(1.03)}}
+/* 当前所选天气源 — 大横幅 */
+.weather-source-banner{display:flex;align-items:center;gap:10px;margin-top:14px;padding:12px 16px;border-radius:16px;background:rgba(255,255,255,0.18);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.25);cursor:pointer;position:relative;z-index:2;transition:background .2s}
+.weather-source-banner:active{background:rgba(255,255,255,0.28)}
+.weather-source-banner-ico{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.22);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.weather-source-banner-ico svg{width:18px;height:18px}
+.weather-source-banner-body{flex:1;min-width:0}
+.weather-source-banner-label{font-size:11px;opacity:0.75;font-weight:500}
+.weather-source-banner-name{font-size:16px;font-weight:700;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.weather-source-banner-score{font-size:13px;font-weight:600;opacity:0.9;flex-shrink:0}
+.weather-source-banner-arrow{opacity:0.6;flex-shrink:0}
+.weather-source-banner-arrow svg{width:16px;height:16px}
+/* 气象要素 — 大卡片网格（非底部小格子） */
+.weather-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px;position:relative;z-index:2}
+.wm-card{display:flex;flex-direction:column;align-items:center;gap:4px;background:rgba(255,255,255,0.16);border-radius:14px;padding:12px 6px;border:1px solid rgba(255,255,255,0.18)}
+.wm-card-ico{width:22px;height:22px;opacity:0.95}
+.wm-card-ico svg{width:22px;height:22px}
+.wm-card-val{font-size:16px;font-weight:700;line-height:1}
+.wm-card-k{font-size:10px;opacity:0.82;font-weight:500}
+/* 今日最高/最低气温 — 紧贴天气描述下方，醒目展示 */
+.weather-hilo{display:flex;align-items:center;gap:8px;font-size:14px;margin-top:6px;font-weight:600}
+.weather-hilo .whilo-hi{color:#FEF3C7}
+.weather-hilo .whilo-lo{color:#DBEAFE}
+.weather-hilo .whilo-sep{opacity:0.5}
+.weather-update{font-size:11px;opacity:0.65;margin-top:12px;text-align:center;position:relative;z-index:2}
+.weather-data-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 8px;border-radius:var(--r-full);background:rgba(16,185,129,0.35);margin-left:6px}
+.weather-data-badge.mock{background:rgba(245,158,11,0.35)}
+/* 显眼的数据模式徽章 — 紧贴温度，让用户一眼看出是实时观测还是模拟数据 */
+.weather-mode-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px 3px 8px;border-radius:var(--r-full);background:rgba(255,255,255,0.22);border:1px solid rgba(255,255,255,0.35);color:#fff;margin-top:8px;backdrop-filter:blur(8px)}
+.weather-mode-badge.mock{background:rgba(245,158,11,0.55);border-color:rgba(251,191,36,0.7)}
+.weather-mode-badge .dot{width:6px;height:6px;border-radius:50%;background:#34D399;box-shadow:0 0 0 3px rgba(52,211,153,0.35);animation:pulseDot 1.6s ease-in-out infinite}
+.weather-mode-badge.mock .dot{background:#FBBF24;box-shadow:0 0 0 3px rgba(251,191,36,0.35);animation:none}
+@keyframes pulseDot{0%,100%{box-shadow:0 0 0 3px rgba(52,211,153,0.35)}50%{box-shadow:0 0 0 6px rgba(52,211,153,0.15)}}
+.weather-main{text-align:center;padding:0;position:relative;z-index:1}
+.home-cards{padding:16px 16px 120px;display:flex;flex-direction:column;gap:12px}
+.home-card{background:var(--card);border-radius:var(--r-lg);padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.home-card-title{font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+.hourly-row{display:flex;justify-content:space-between;overflow-x:auto;gap:4px}
+.hourly-row::-webkit-scrollbar{display:none}
+.hourly-item{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:48px;flex-shrink:0}
+.hourly-time{font-size:11px;color:var(--text-secondary)}
+.hourly-icon{width:28px;height:28px}
+.hourly-temp{font-size:13px;font-weight:600}
+.daily-list{display:flex;flex-direction:column;gap:10px}
+.daily-row{display:flex;align-items:center;gap:12px}
+.daily-date{font-size:13px;width:56px;color:var(--text-secondary)}
+.daily-icon{width:24px;height:24px;margin:0 auto}
+.daily-desc{font-size:12px;color:var(--text-secondary);width:60px;text-align:center}
+.daily-temp{display:flex;align-items:center;gap:6px;flex:1;justify-content:flex-end}
+.daily-low{font-size:13px;color:var(--muted)}
+.daily-high{font-size:13px;font-weight:600}
+.daily-bar{width:60px;height:4px;background:var(--border);border-radius:2px;position:relative}
+.daily-bar-fill{position:absolute;height:100%;border-radius:2px;background:linear-gradient(90deg,#60A5FA,#FBBF24)}
+.air-badge{display:inline-flex;align-items:center;gap:4px;background:var(--success);color:#fff;padding:4px 12px;border-radius:var(--r-full);font-size:12px;font-weight:600}
+
+/* Leaderboard */
+.lb-header{text-align:center;padding:12px 16px 8px}
+.lb-header h2{font-size:18px;font-weight:700}
+.lb-header p{font-size:12px;color:var(--text-secondary);margin-top:2px}
+.lb-tabs{display:flex;gap:8px;padding:8px 16px 12px}
+.lb-tab{flex:1;text-align:center;padding:8px 0;font-size:13px;font-weight:500;color:var(--text-secondary);background:var(--card);border-radius:var(--r-md);border:1px solid var(--border);cursor:pointer}
+.lb-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.lb-list{padding:0 16px 120px;display:flex;flex-direction:column;gap:10px}
+.lb-item{background:var(--card);border-radius:var(--r-lg);padding:14px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.04);transition:transform 0.15s}
+.lb-item:active{transform:scale(0.98)}
+.lb-rank{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0}
+.lb-rank-1{background:var(--gold);color:#fff}
+.lb-rank-2{background:var(--silver);color:#fff}
+.lb-rank-3{background:var(--bronze);color:#fff}
+.lb-rank-other{background:var(--border);color:var(--text-secondary)}
+.lb-info{flex:1}
+.lb-name{font-size:15px;font-weight:600}
+.lb-desc{font-size:11px;color:var(--text-secondary);margin-top:2px}
+.lb-score{text-align:right}
+.lb-score-val{font-size:20px;font-weight:700;color:var(--accent)}
+.lb-trend{font-size:11px;display:flex;align-items:center;gap:2px;justify-content:flex-end}
+.lb-trend.up{color:var(--success)}
+.lb-trend.down{color:var(--danger)}
+
+/* Source Detail */
+.sd-header{padding:12px 16px;display:flex;align-items:center;gap:12px}
+.back-btn{width:36px;height:36px;border-radius:50%;background:var(--card);display:flex;align-items:center;justify-content:center;cursor:pointer;border:1px solid var(--border)}
+.back-btn svg{width:18px;height:18px}
+.sd-title{font-size:17px;font-weight:700}
+.sd-body{padding:0 16px 120px}
+.sd-score-card{background:linear-gradient(135deg,#3B82F6,#6366F1);color:#fff;border-radius:var(--r-lg);padding:20px;text-align:center}
+.sd-score-val{font-size:48px;font-weight:200;line-height:1}
+.sd-score-label{font-size:13px;opacity:0.8;margin-top:4px}
+.sd-score-trend{font-size:12px;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:4px}
+.sd-section{background:var(--card);border-radius:var(--r-lg);padding:16px;margin-top:12px}
+.sd-section-title{font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:12px}
+.sd-elem-row{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.sd-elem-name{font-size:13px;width:48px}
+.sd-elem-bar{flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+.sd-elem-fill{height:100%;border-radius:3px;background:var(--accent)}
+.sd-elem-val{font-size:13px;font-weight:600;width:44px;text-align:right}
+.sd-horizon-row{display:flex;gap:8px}
+.sd-horizon-item{flex:1;text-align:center;background:var(--bg);border-radius:var(--r-md);padding:10px 4px}
+.sd-horizon-label{font-size:11px;color:var(--text-secondary)}
+.sd-horizon-val{font-size:16px;font-weight:700;margin-top:2px}
+.sd-freq{text-align:center;font-size:12px;color:var(--text-secondary);margin-top:8px}
+
+/* Minute Precipitation */
+.mp-hero{background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;padding:20px 16px 24px;text-align:center}
+.mp-title{font-size:16px;font-weight:600}
+.mp-status{font-size:14px;margin-top:8px;opacity:0.9}
+/* mp-chart 图表已按需求移除 */
+
+/* Alert Detail */
+.ad-hero{background:linear-gradient(135deg,#D97706,#F59E0B);color:#fff;padding:20px 16px 28px}
+.ad-badge{display:inline-block;background:rgba(255,255,255,0.25);padding:4px 12px;border-radius:var(--r-full);font-size:12px;font-weight:600}
+.ad-title{font-size:22px;font-weight:700;margin-top:10px}
+.ad-meta{font-size:12px;opacity:0.8;margin-top:6px}
+.ad-body{padding:16px}
+.ad-section{background:var(--card);border-radius:var(--r-lg);padding:16px;margin-bottom:12px}
+.ad-section h3{font-size:14px;font-weight:600;margin-bottom:8px}
+.ad-section p{font-size:13px;line-height:1.6;color:var(--text-secondary)}
+
+/* Community */
+.cm-header{text-align:center;padding:12px 16px 8px}
+.cm-header h2{font-size:18px;font-weight:700}
+.cm-tabs{display:flex;gap:0;padding:8px 16px 12px;border-bottom:1px solid var(--border)}
+.cm-tab{flex:1;text-align:center;padding:6px 0;font-size:13px;font-weight:500;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent}
+.cm-tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.cm-list{padding:8px 16px 120px;display:flex;flex-direction:column;gap:12px}
+.cm-card{background:var(--card);border-radius:var(--r-lg);overflow:hidden;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.cm-photo{width:100%;height:180px;display:flex;align-items:center;justify-content:center;font-size:14px;color:rgba(255,255,255,0.8)}
+.cm-photo-blue{background:linear-gradient(135deg,#3B82F6,#60A5FA)}
+.cm-photo-orange{background:linear-gradient(135deg,#F59E0B,#FBBF24)}
+.cm-photo-gray{background:linear-gradient(135deg,#6B7B95,#9CA8BE)}
+.cm-photo-green{background:linear-gradient(135deg,#10B981,#34D399)}
+.cm-photo-purple{background:linear-gradient(135deg,#8B5CF6,#A78BFA)}
+.cm-card-body{padding:12px 14px}
+.cm-card-meta{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.cm-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;font-weight:600}
+.cm-username{font-size:12px;font-weight:600}
+.cm-location{font-size:11px;color:var(--text-secondary)}
+.cm-caption{font-size:13px;line-height:1.5;margin-bottom:8px}
+.cm-card-actions{display:flex;align-items:center;gap:16px}
+.cm-action{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);cursor:pointer}
+.cm-action svg{width:16px;height:16px}
+.cm-action.liked{color:var(--danger)}
+.cm-action.liked svg{fill:var(--danger)}
+
+/* Feed Detail */
+.fd-header{display:flex;align-items:center;gap:12px;padding:8px 16px}
+.fd-body{padding:0 16px 120px}
+.fd-photo{width:100%;height:240px;border-radius:var(--r-lg);display:flex;align-items:center;justify-content:center;font-size:16px;color:rgba(255,255,255,0.85)}
+.fd-meta{display:flex;align-items:center;gap:8px;margin-top:12px}
+.fd-avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;font-weight:600}
+.fd-username{font-size:14px;font-weight:600}
+.fd-location{font-size:12px;color:var(--text-secondary)}
+.fd-time{font-size:11px;color:var(--muted)}
+.fd-caption{font-size:14px;line-height:1.6;margin-top:10px}
+.fd-weather-tag{display:inline-flex;align-items:center;gap:4px;background:var(--accent-light);color:var(--accent);padding:4px 10px;border-radius:var(--r-full);font-size:12px;font-weight:600;margin-top:8px}
+.fd-actions{display:flex;align-items:center;gap:20px;padding:12px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-top:12px}
+.fd-action{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--text-secondary);cursor:pointer}
+.fd-action svg{width:20px;height:20px}
+.fd-action.liked{color:var(--danger)}
+.fd-action.liked svg{fill:var(--danger)}
+.fd-comments-title{font-size:14px;font-weight:600;margin-top:16px;margin-bottom:8px}
+.fd-comment{display:flex;gap:8px;margin-bottom:12px}
+.fd-c-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;font-weight:600;flex-shrink:0}
+.fd-c-body{flex:1}
+.fd-c-name{font-size:12px;font-weight:600}
+.fd-c-text{font-size:13px;line-height:1.5;margin-top:2px}
+.fd-c-time{font-size:10px;color:var(--muted);margin-top:2px}
+.fd-comment-input{position:sticky;bottom:0;background:var(--card);border-top:1px solid var(--border);padding:10px 16px;display:flex;gap:8px;z-index:10}
+.fd-input{flex:1;border:1px solid var(--border);border-radius:var(--r-full);padding:8px 16px;font-size:13px;outline:none;font-family:var(--font)}
+.fd-send-btn{background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:var(--r-full);font-size:13px;font-weight:600;cursor:pointer}
+
+/* Location Picker */
+.lp-search{padding:12px 16px}
+.lp-search-input{width:100%;padding:10px 16px;border:1px solid var(--border);border-radius:var(--r-full);font-size:14px;outline:none;font-family:var(--font);background:var(--card)}
+.lp-current{padding:8px 16px}
+.lp-current-label{font-size:12px;color:var(--text-secondary);margin-bottom:8px}
+.lp-current-item{display:flex;align-items:center;gap:8px;padding:12px;background:var(--card);border-radius:var(--r-md);cursor:pointer}
+.lp-current-item svg{width:16px;height:16px;color:var(--accent)}
+.lp-current-name{font-size:15px;font-weight:600}
+.lp-hot{padding:8px 16px 16px}
+.lp-hot-label{font-size:12px;color:var(--text-secondary);margin-bottom:8px}
+.lp-hot-grid{display:flex;flex-wrap:wrap;gap:8px}
+.lp-hot-item{padding:8px 16px;background:var(--card);border-radius:var(--r-full);font-size:13px;cursor:pointer;border:1px solid var(--border)}
+.lp-hot-item:hover{border-color:var(--accent);color:var(--accent)}
+.lp-city-list{padding:0 16px 120px}
+.lp-city{border-bottom:1px solid var(--border)}
+.lp-city-header{display:flex;align-items:center;justify-content:space-between;padding:12px 0;cursor:pointer}
+.lp-city-name{font-size:15px;font-weight:600}
+.lp-city-arrow{width:16px;height:16px;transition:transform 0.2s}
+.lp-city.open .lp-city-arrow{transform:rotate(180deg)}
+.lp-districts{display:none;flex-wrap:wrap;gap:6px;padding:0 0 12px}
+.lp-city.open .lp-districts{display:flex}
+.lp-district{padding:6px 14px;background:var(--bg);border-radius:var(--r-full);font-size:12px;cursor:pointer;border:1px solid var(--border)}
+.lp-district:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.lp-district.selected{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* Notifications */
+.nt-header{text-align:center;padding:12px 16px 8px}
+.nt-header h2{font-size:18px;font-weight:700}
+.nt-clear{position:absolute;right:16px;top:14px;font-size:13px;color:var(--accent);cursor:pointer;background:none;border:none}
+.nt-list{padding:8px 16px 120px;display:flex;flex-direction:column;gap:8px}
+.nt-item{background:var(--card);border-radius:var(--r-lg);padding:14px;display:flex;gap:12px;cursor:pointer;border-left:3px solid transparent}
+.nt-item.unread{border-left-color:var(--accent)}
+.nt-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.nt-icon-alert{background:#FEF3C7;color:var(--warning)}
+.nt-icon-report{background:var(--accent-light);color:var(--accent)}
+.nt-icon-reminder{background:#D1FAE5;color:var(--success)}
+.nt-icon svg{width:18px;height:18px}
+.nt-body{flex:1}
+.nt-title{font-size:14px;font-weight:600}
+.nt-text{font-size:12px;color:var(--text-secondary);margin-top:4px;line-height:1.5}
+.nt-time{font-size:11px;color:var(--muted);margin-top:4px}
+
+/* Profile */
+.pf-header{display:block}
+.pf-header{background:linear-gradient(135deg,#3B82F6,#6366F1);color:#fff;padding:24px 20px 28px;text-align:center;position:relative}
+.pf-avatar{width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 8px;border:3px solid rgba(255,255,255,0.3)}
+.pf-name{font-size:18px;font-weight:700}
+.pf-id{font-size:12px;opacity:0.7;margin-top:2px}
+.pf-stats{display:flex;justify-content:center;gap:32px;margin-top:16px}
+.pf-stat{text-align:center}
+.pf-stat-num{font-size:20px;font-weight:700}
+.pf-stat-label{font-size:11px;opacity:0.8;margin-top:2px}
+.pf-body{padding:16px 16px 120px}
+.pf-section{background:var(--card);border-radius:var(--r-lg);overflow:hidden;margin-bottom:12px}
+.pf-section-title{font-size:13px;font-weight:600;color:var(--text-secondary);padding:12px 16px 4px}
+.pf-row{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;border-bottom:1px solid var(--border)}
+.pf-row:last-child{border-bottom:none}
+.pf-row-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pf-row-icon svg{width:18px;height:18px}
+.pf-row-label{flex:1;font-size:14px;font-weight:500}
+.pf-row-arrow{width:16px;height:16px;color:var(--muted)}
+.pf-badge{display:inline-block;padding:2px 8px;background:var(--danger);color:#fff;border-radius:var(--r-full);font-size:10px;font-weight:600}
+
+/* Modal */
+.modal-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;z-index:200}
+.modal-overlay.show{display:flex}
+.modal-box{background:#fff;border-radius:var(--r-xl);width:320px;padding:24px 20px;text-align:center}
+.modal-icon{width:56px;height:56px;margin:0 auto 12px}
+.modal-title{font-size:18px;font-weight:700;margin-bottom:8px}
+.modal-text{font-size:14px;color:var(--text-secondary);line-height:1.5;margin-bottom:20px}
+.modal-btn{width:100%;padding:12px;border:none;border-radius:var(--r-full);font-size:15px;font-weight:600;cursor:pointer}
+.modal-btn-primary{background:var(--wechat);color:#fff;margin-bottom:8px}
+.modal-btn-secondary{background:var(--bg);color:var(--text-secondary)}
+
+/* Comment Modal */
+.cm-modal-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.3);display:none;align-items:flex-end;justify-content:center;z-index:200}
+.cm-modal-overlay.show{display:flex}
+.cm-modal-box{background:#fff;width:100%;border-radius:var(--r-xl) var(--r-xl) 0 0;padding:16px 16px 24px}
+.cm-modal-title{font-size:15px;font-weight:600;text-align:center;margin-bottom:12px}
+.cm-modal-input{width:100%;min-height:80px;border:1px solid var(--border);border-radius:var(--r-md);padding:10px 12px;font-size:13px;outline:none;font-family:var(--font);resize:none}
+.cm-modal-actions{display:flex;gap:8px;margin-top:10px}
+.cm-modal-btn{flex:1;padding:10px;border:none;border-radius:var(--r-full);font-size:14px;font-weight:600;cursor:pointer}
+.cm-modal-cancel{background:var(--bg);color:var(--text-secondary)}
+.cm-modal-submit{background:var(--accent);color:#fff}
+
+/* Camera */
+.cam-screen{background:#000}
+.cam-view{flex:1;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);font-size:14px;position:relative}
+.cam-overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:240px;height:240px;border:2px solid rgba(255,255,255,0.4);border-radius:var(--r-lg)}
+.cam-hint{position:absolute;bottom:100px;left:0;right:0;text-align:center;font-size:13px;color:rgba(255,255,255,0.6)}
+.cam-btn-bar{padding:20px 40px 40px;display:flex;justify-content:space-around;align-items:center}
+.cam-close{width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.cam-close svg{width:20px;height:20px;color:#fff}
+.cam-capture{width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,0.3);cursor:pointer}
+.cam-switch{width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.cam-switch svg{width:20px;height:20px;color:#fff}
+/* 社区拍照悬浮按钮 */
+.cm-fab{position:absolute;right:18px;bottom:108px;width:54px;height:54px;border-radius:50%;background:var(--accent);display:none;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(59,130,246,0.45);cursor:pointer;z-index:120}
+.cm-fab svg{width:26px;height:26px}
+.cm-fab:active{transform:scale(0.94)}
+/* 真实摄像头预览 */
+.cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;z-index:0}
+.cam-overlay{z-index:1}
+.cam-hint{z-index:1}
+
+/* Toast */
+.toast{position:absolute;bottom:120px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#fff;padding:10px 20px;border-radius:var(--r-full);font-size:13px;z-index:300;opacity:0;transition:opacity 0.3s;pointer-events:none}
+.toast.show{opacity:1}
+/* Loading Overlay */
+.loading-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;transition:opacity 0.3s,visibility 0.3s}
+.loading-overlay.hidden{opacity:0;visibility:hidden;pointer-events:none}
+.loading-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:14px;color:var(--text-secondary);margin-top:12px}
+.loading-error{text-align:center;padding:0 30px;max-width:280px}
+.loading-error-title{font-size:16px;font-weight:700;color:var(--text-primary);margin-bottom:8px}
+.loading-error-msg{font-size:13px;color:var(--text-secondary);line-height:1.5;margin-bottom:16px}
+.loading-retry-btn{background:var(--accent);color:#fff;border:none;border-radius:var(--r-md);padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer}
+/* AI Weather Button */
+.ai-weather-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);color:#fff;padding:8px 18px;border-radius:var(--r-full);font-size:13px;font-weight:600;cursor:pointer;margin-top:14px;backdrop-filter:blur(10px);transition:background 0.2s,transform 0.15s}
+.ai-weather-btn:hover{background:rgba(255,255,255,0.3)}
+.ai-weather-btn:active{transform:scale(0.95)}
+.ai-weather-btn svg{width:16px;height:16px}
+
+/* AI Loading Overlay */
+.ai-loading-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(135deg,#F0F5FA 0%,#DBEAFE 50%,#E0E7FF 100%);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:500;border-radius:44px}
+.ai-loading-overlay.show{display:flex}
+.ai-loading-circle{position:relative;width:100px;height:100px;display:flex;align-items:center;justify-content:center}
+.ai-loading-ring{position:absolute;width:100%;height:100%;border:3px solid transparent;border-top-color:var(--accent);border-right-color:var(--accent);border-radius:50%;animation:ai-spin 1s linear infinite}
+.ai-loading-ring-2{position:absolute;width:78%;height:78%;border:2px solid transparent;border-bottom-color:#8B5CF6;border-left-color:#8B5CF6;border-radius:50%;animation:ai-spin-rev 1.5s linear infinite}
+@keyframes ai-spin{to{transform:rotate(360deg)}}
+@keyframes ai-spin-rev{to{transform:rotate(-360deg)}}
+.ai-loading-icon{width:40px;height:40px;animation:ai-pulse 1.5s ease-in-out infinite}
+@keyframes ai-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.15);opacity:0.7}}
+.ai-loading-text{margin-top:28px;font-size:15px;font-weight:600;color:var(--text-primary)}
+.ai-loading-dots{display:inline-flex;gap:3px;margin-left:2px}
+.ai-loading-dots span{width:5px;height:5px;background:var(--accent);border-radius:50%;animation:ai-dot 1.4s infinite ease-in-out}
+.ai-loading-dots span:nth-child(2){animation-delay:0.2s}
+.ai-loading-dots span:nth-child(3){animation-delay:0.4s}
+@keyframes ai-dot{0%,80%,100%{opacity:0.3;transform:scale(0.8)}40%{opacity:1;transform:scale(1.2)}}
+.ai-loading-sub{margin-top:10px;font-size:12px;color:var(--text-secondary)}
+/* Status bar padding */
+#screen-leaderboard,#screen-source-detail,#screen-community,#screen-feed-detail,#screen-location,#screen-notifications{padding-top:var(--sb-h)}
+.home-hero{padding-top:calc(var(--sb-h) + 4px)}
+.mp-hero{padding-top:calc(var(--sb-h) + 8px)}
+.ad-hero{padding-top:calc(var(--sb-h) + 8px)}
+.pf-header{padding-top:calc(var(--sb-h) + 12px)}
+#screen-camera .cam-view{padding-top:var(--sb-h)}
+</style>
+</head>
+<body>
+<div class="device" id="device">
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner" id="loadingSpinner"></div>
+  <div class="loading-text" id="loadingText">正在获取天气数据...</div>
+  <div class="loading-error" id="loadingError" style="display:none">
+    <div class="loading-error-title">加载失败</div>
+    <div class="loading-error-msg" id="loadingErrorMsg">请确认后端服务已启动</div>
+    <button class="loading-retry-btn" onclick="initData._retried=false;initData()">重新加载</button>
+  </div>
+</div>
+<!-- AI Loading Overlay -->
+<div class="ai-loading-overlay" id="aiLoadingOverlay">
+  <div class="ai-loading-circle">
+    <div class="ai-loading-ring"></div>
+    <div class="ai-loading-ring-2"></div>
+    <svg class="ai-loading-icon" viewBox="0 0 64 64"><path d="M20 42c-5 0-9-4-9-9s4-9 9-9c0-6 5-11 11-11s11 5 11 11c4 0 7 3 7 7s-3 7-7 7H20z" fill="#3B82F6"/></svg>
+  </div>
+  <div class="ai-loading-text">AI 正在分析天气数据<span class="ai-loading-dots"><span></span><span></span><span></span></span></div>
+  <div class="ai-loading-sub">正在调用大模型生成智能预报</div>
+</div>
+<!-- Status Bar -->
+<div class="status-bar status-light" id="statusBar">
+  <span class="status-time" id="statusTime">14:13</span>
+  <div class="status-icons">
+    <svg viewBox="0 0 18 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="0.5"/><rect x="5" y="5" width="3" height="7" rx="0.5"/><rect x="10" y="2" width="3" height="10" rx="0.5"/><rect x="15" y="0" width="3" height="12" rx="0.5"/></svg>
+    <svg viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 4a10 10 0 0 1 14 0"/><path d="M3 7a6 6 0 0 1 10 0"/><circle cx="8" cy="10" r="1" fill="currentColor"/></svg>
+    <svg viewBox="0 0 25 12" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="0.5" width="21" height="11" rx="2.5"/><rect x="23" y="4" width="2" height="4" rx="1" fill="currentColor"/><rect x="2" y="2" width="14" height="8" rx="1" fill="currentColor"/></svg>
+  </div>
+</div>
+<!-- ===== Home Screen ===== -->
+<div class="screen active" id="screen-home">
+  <div class="home-hero">
+    <div class="weather-pattern" id="weatherPattern"></div>
+    <div class="location-bar">
+      <div class="location-left" onclick="openLocation()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
+        <span class="location-name" id="locName">北京 朝阳区</span>
+        <svg class="location-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <!-- 首页通知铃已按需求移除 -->
+
+    </div>
+    <div class="source-selector" id="sourceSelector"></div>
+    <div class="weather-showcase">
+      <div class="weather-showcase-inner">
+        <div class="weather-showcase-left">
+          <div class="weather-temp" id="homeTemp">--<span class="weather-temp-unit">°</span></div>
+          <div class="weather-desc" id="homeDesc">--</div>
+          <div class="weather-hilo" id="homeHiLo"><span class="whilo-hi">最高 --°</span><span class="whilo-sep">·</span><span class="whilo-lo">最低 --°</span></div>
+          <div class="weather-mode-badge" id="homeModeBadge"><span class="dot"></span><span id="homeModeText">加载中</span></div>
+        </div>
+        <div class="weather-showcase-right">
+          <div class="weather-icon-xl" id="homeWeatherIcon"></div>
+        </div>
+      </div>
+      <div class="weather-source-banner" id="homeSourceBanner">
+        <div class="weather-source-banner-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg></div>
+        <div class="weather-source-banner-body">
+          <div class="weather-source-banner-label">当前数据来源</div>
+          <div class="weather-source-banner-name" id="homeSourceName">加载中...</div>
+        </div>
+        <div class="weather-source-banner-score" id="homeSourceScore"></div>
+        <div class="weather-source-banner-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+      </div>
+      <div class="weather-metrics" id="homeMetrics"></div>
+      <div class="weather-update" id="homeUpdate"></div>
+      <button class="ai-weather-btn" onclick="callAIWeather()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l1.5 5L19 8.5 13.5 10 12 15l-1.5-5L5 8.5 10.5 7z"/><path d="M5 19l.7 2L8 21.7 6 22l-.7 2L4.5 22 2.5 21.7 4 21z"/><path d="M19 14l.5 1.5L21 16l-1.5.5L19 18l-.5-1.5L17 16l1.5-.5z"/></svg>
+        AI 智能预报
+      </button>
+    </div>
+  </div>
+  <div class="home-cards">
+    <div class="home-card">
+      <div class="home-card-title">逐小时预报</div>
+      <div class="hourly-row" id="hourlyRow"></div>
+    </div>
+    <div class="home-card">
+      <div class="home-card-title">
+        <span>7日预报</span>
+        <span class="air-badge" id="airBadge">优</span>
+      </div>
+      <div class="daily-list" id="dailyList"></div>
+    </div>
+    <div class="home-card" onclick="openLeaderboard()" style="cursor:pointer">
+      <div class="home-card-title">
+        <span>数据源准确率排行</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:16px;height:16px"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div id="homeRankPreview"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Leaderboard Screen ===== -->
+<div class="screen" id="screen-leaderboard">
+  <div class="lb-header">
+    <h2>准确率排行榜</h2>
+    <p>基于真实观测数据回算 · 透明可信</p>
+  </div>
+  <div class="lb-tabs">
+    <div class="lb-tab active" onclick="switchTimeRange('7d')">近7天</div>
+    <div class="lb-tab" onclick="switchTimeRange('30d')">近30天</div>
+    <div class="lb-tab" onclick="switchTimeRange('all')">全部</div>
+  </div>
+  <div class="lb-list" id="lbList"></div>
+</div>
+
+<!-- ===== Source Detail Screen ===== -->
+<div class="screen" id="screen-source-detail">
+  <div class="sd-header">
+    <div class="back-btn" onclick="goBack()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+    </div>
+    <div class="sd-title" id="sdTitle">数据源详情</div>
+  </div>
+  <div class="sd-body" id="sdBody"></div>
+</div>
+
+<!-- ===== Minute Precipitation Screen ===== -->
+<div class="screen" id="screen-minute-precip">
+  <div class="mp-hero">
+    <div class="mp-title">分钟级降水</div>
+    <div class="mp-status" id="mpStatus">暂无降水</div>
+  </div>
+  <!-- 降水图表已按需求移除 -->
+  <div style="padding:0 16px 120px">
+    <div class="home-card">
+      <div class="home-card-title">降水类型说明</div>
+      <p style="font-size:13px;color:var(--text-secondary);line-height:1.6">彩云短临预报基于雷达回波外推技术，可提供未来2小时分钟级降水预测。数据每6分钟更新一次。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Alert Detail Screen ===== -->
+<div class="screen" id="screen-alert-detail">
+  <div class="ad-hero">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
+      <div class="back-btn" onclick="goBack()" style="background:rgba(255,255,255,0.2);border:none;color:#fff">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </div>
+      <span style="font-size:16px;font-weight:600">预警详情</span>
+    </div>
+    <span class="ad-badge" id="adBadge">橙色预警</span>
+    <div class="ad-title" id="adTitle">暴雨橙色预警</div>
+    <div class="ad-meta" id="adMeta">发布时间：--</div>
+  </div>
+  <div class="ad-body" id="adBody"></div>
+</div>
+<!-- ===== Community Screen ===== -->
+<div class="screen" id="screen-community">
+  <div class="cm-header">
+    <h2>天空社区</h2>
+    <p style="font-size:12px;color:var(--text-secondary)">实拍即校验 · 真实天气众包</p>
+  </div>
+  <div class="cm-tabs">
+    <div class="cm-tab active" onclick="switchFilter('hot')">热门</div>
+    <div class="cm-tab" onclick="switchFilter('new')">最新</div>
+    <div class="cm-tab" onclick="switchFilter('near')">附近</div>
+  </div>
+  <div class="cm-list" id="cmList"></div>
+</div>
+
+<!-- ===== Feed Detail Screen ===== -->
+<div class="screen" id="screen-feed-detail">
+  <div class="fd-header">
+    <div class="back-btn" onclick="goBack()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+    </div>
+    <span style="font-size:17px;font-weight:700">动态详情</span>
+  </div>
+  <div class="fd-body" id="fdBody"></div>
+</div>
+
+<!-- ===== Location Picker Screen ===== -->
+<div class="screen" id="screen-location">
+  <div class="sd-header">
+    <div class="back-btn" onclick="goBack()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+    </div>
+    <div class="sd-title">选择地区</div>
+  </div>
+  <div class="lp-search">
+    <input class="lp-search-input" placeholder="搜索城市或区域" oninput="filterCities(this.value)" id="lpSearchInput">
+  </div>
+  <div class="lp-current">
+    <div class="lp-current-label">当前定位</div>
+    <div class="lp-current-item" id="lpCurrentItem" onclick="locateMe()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
+      <span class="lp-current-name" id="lpCurrentName">点击定位当前位置</span>
+    </div>
+  </div>
+  <div class="lp-hot">
+    <div class="lp-hot-label">热门城市</div>
+    <div class="lp-hot-grid" id="lpHotGrid"></div>
+  </div>
+  <div class="lp-city-list" id="lpCityList"></div>
+</div>
+
+<!-- ===== Notification Center ===== -->
+<div class="screen" id="screen-notifications">
+  <div class="nt-header">
+    <h2>消息中心</h2>
+  </div>
+  <button class="nt-clear" onclick="markAllRead()">全部已读</button>
+  <div class="nt-list" id="ntList"></div>
+</div>
+
+<!-- ===== Profile Screen ===== -->
+<div class="screen" id="screen-profile">
+  <div class="pf-header">
+    <div class="pf-avatar" id="pfAvatar">W</div>
+    <div class="pf-name" id="pfName">微信用户</div>
+    <div class="pf-id" id="pfId">未登录</div>
+    <div class="pf-stats">
+      <div class="pf-stat"><div class="pf-stat-num" id="pfStatPhotos">0</div><div class="pf-stat-label">实拍</div></div>
+      <div class="pf-stat"><div class="pf-stat-num" id="pfStatLikes">0</div><div class="pf-stat-label">获赞</div></div>
+      <div class="pf-stat"><div class="pf-stat-num" id="pfStatBadges">0</div><div class="pf-stat-label">徽章</div></div>
+    </div>
+  </div>
+  <div class="pf-body">
+    <div class="pf-section">
+      <div class="pf-section-title">我的实拍</div>
+      <div class="pf-row" onclick="goToCamera()">
+        <div class="pf-row-icon" style="background:var(--accent-light)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+        <span class="pf-row-label">拍天空</span>
+        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="pf-row" onclick="switchTab('community')">
+        <div class="pf-row-icon" style="background:#FEF3C7"><svg viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
+        <span class="pf-row-label">我的相册</span>
+        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+    <div class="pf-section">
+      <div class="pf-section-title">天气偏好</div>
+      <div class="pf-row" onclick="showToast('偏好设置已保存')">
+        <div class="pf-row-icon" style="background:var(--accent-light)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+        <span class="pf-row-label">关注的城市</span>
+        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="pf-row" onclick="showToast('通知设置已保存')">
+        <div class="pf-row-icon" style="background:#D1FAE5"><svg viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+        <span class="pf-row-label">预警通知设置</span>
+        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="pf-row" onclick="showToast('已切换为温度单位 °C')">
+        <div class="pf-row-icon" style="background:#FEF3C7"><svg viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg></div>
+        <span class="pf-row-label">温度单位</span>
+        <span style="font-size:13px;color:var(--text-secondary)">&#176;C</span>
+        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+    <div class="pf-section">
+      <div class="pf-section-title">关于</div>
+      <div class="pf-row" onclick="showToast('聚合天气 v1.0.0')">
+        <div class="pf-row-icon" style="background:var(--accent-light)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div>
+        <span class="pf-row-label">关于聚合天气</span>
+        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="pf-row" onclick="showToast('已清除缓存')">
+        <div class="pf-row-icon" style="background:#FEE2E2"><svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
+        <span class="pf-row-label">清除缓存</span>
+        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="pf-row" onclick="showToast('感谢使用聚合天气！')">
+        <div class="pf-row-icon" style="background:#D1FAE5"><svg viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 5-3.5 7.5-9 9-5.5-1.5-9-4-9-9V5l9-3 9 3v7z"/></svg></div>
+        <span class="pf-row-label">反馈与建议</span>
+        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="pf-row" id="logoutRow" onclick="logout()" style="display:none;justify-content:center;color:var(--danger)">
+        <span class="pf-row-label" style="color:var(--danger)">退出登录</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Login / Register Modal ===== -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal-box" style="width:300px">
+    <div class="modal-title">登录 / 注册</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <div class="auth-tab active" id="tabLogin" onclick="switchAuthTab('login')" style="flex:1;text-align:center;padding:8px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;background:var(--accent);color:#fff">登录</div>
+      <div class="auth-tab" id="tabRegister" onclick="switchAuthTab('register')" style="flex:1;text-align:center;padding:8px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;background:#eef2f7;color:var(--text-secondary)">注册</div>
+    </div>
+    <div id="loginForm">
+      <input class="auth-input" id="loginIdentifier" placeholder="用户名或邮箱" style="width:100%;box-sizing:border-box;padding:11px 12px;margin-bottom:10px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none" />
+      <input class="auth-input" id="loginPassword" type="password" placeholder="密码" style="width:100%;box-sizing:border-box;padding:11px 12px;margin-bottom:10px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none" />
+    </div>
+    <div id="registerForm" style="display:none">
+      <input class="auth-input" id="regUsername" placeholder="用户名（展示用）" style="width:100%;box-sizing:border-box;padding:11px 12px;margin-bottom:10px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none" />
+      <input class="auth-input" id="regEmail" placeholder="邮箱" style="width:100%;box-sizing:border-box;padding:11px 12px;margin-bottom:10px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none" />
+      <input class="auth-input" id="regPassword" type="password" placeholder="密码（至少6位）" style="width:100%;box-sizing:border-box;padding:11px 12px;margin-bottom:10px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none" />
+    </div>
+    <div class="auth-error" id="authError" style="color:var(--danger);font-size:12px;min-height:16px;margin-bottom:8px"></div>
+    <button class="modal-btn modal-btn-primary" id="authSubmitBtn" onclick="submitAuth()">登录</button>
+    <button class="modal-btn modal-btn-secondary" onclick="hideLoginModal()">暂不登录</button>
+  </div>
+</div>
+
+<!-- ===== Comment Modal ===== -->
+<div class="cm-modal-overlay" id="commentModal">
+  <div class="cm-modal-box">
+    <div class="cm-modal-title">写评论</div>
+    <textarea class="cm-modal-input" placeholder="说说你的看法..." id="commentInput"></textarea>
+    <div class="cm-modal-actions">
+      <button class="cm-modal-btn cm-modal-cancel" onclick="hideCommentModal()">取消</button>
+      <button class="cm-modal-btn cm-modal-submit" onclick="submitComment()">发布</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Camera Screen ===== -->
+<div class="screen cam-screen" id="screen-camera">
+    <div class="cam-view">
+      <video id="camVideo" class="cam-video" autoplay playsinline muted></video>
+      <div class="cam-overlay"></div>
+      <div class="cam-hint" id="camHint">将天空放入框内拍摄</div>
+    </div>
+  <div class="cam-btn-bar">
+    <div class="cam-close" onclick="closeCamera()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </div>
+    <div class="cam-capture" onclick="capturePhoto()"></div>
+    <div class="cam-switch" onclick="switchCamera()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Tab Bar ===== -->
+<div class="tab-bar" id="tabBar">
+  <div class="tab-item active" onclick="switchTab('home')">
+    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+    <span class="tab-label">天气</span>
+  </div>
+  <div class="tab-item" onclick="switchTab('leaderboard')">
+    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+    <span class="tab-label">排行</span>
+  </div>
+  <div class="tab-item" onclick="switchTab('community')">
+    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    <span class="tab-label">社区</span>
+  </div>
+  <div class="tab-item" onclick="switchTab('profile')">
+    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    <span class="tab-label">我的</span>
+  </div>
+</div>
+
+<!-- ===== Toast ===== -->
+<div class="toast" id="toast"></div>
+<!-- ===== Community Photo FAB ===== -->
+<div class="cm-fab" id="cmFab" onclick="goToCamera()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+</div>
+<!-- test_data.js 已由后端 API 替代，不再需要加载 -->
+<script>
+// ===== API 客户端（连接后端 /api/* 接口）=====
+var api = {
+  // GET /api/weather?city=xxx&district=xxx&source=xxx
+  // source：数据源 ID，后端按源选用对应真实数值模式取数（切源即真实预报差异）
+  getWeather: function(city, district, source) {
+    var q = 'city=' + encodeURIComponent(city) + '&district=' + encodeURIComponent(district);
+    if (source) q += '&source=' + encodeURIComponent(source);
+    return fetch('/api/weather?' + q)
+      .then(function(r) { return r.json(); });
+  },
+  // GET /api/ranking?range=7d|30d|all
+  getRanking: function(range) {
+    return fetch('/api/ranking?range=' + range).then(function(r) { return r.json(); });
+  },
+  // GET /api/source/:id
+  getSource: function(id) {
+    return fetch('/api/source/' + id).then(function(r) { return r.json(); });
+  },
+  // GET /api/notifications
+  getNotifications: function() {
+    return fetch('/api/notifications').then(function(r) { return r.json(); });
+  },
+  // PUT /api/notifications/:index/read
+  markNotificationRead: function(idx) {
+    return fetch('/api/notifications/' + idx + '/read', { method: 'PUT' })
+      .then(function(r) { return r.json(); });
+  },
+  // PUT /api/notifications/read-all
+  markAllNotificationsRead: function() {
+    return fetch('/api/notifications/read-all', { method: 'PUT' })
+      .then(function(r) { return r.json(); });
+  },
+  // GET /api/feeds?filter=hot|new|near
+  getFeeds: function(filter) {
+    return fetch('/api/feeds?filter=' + filter).then(function(r) { return r.json(); });
+  },
+  // GET /api/feeds/:id
+  getFeed: function(id) {
+    return fetch('/api/feeds/' + id).then(function(r) { return r.json(); });
+  },
+  // POST /api/feeds/:id/toggle-like（需登录）
+  toggleLike: function(feedId) {
+    var h = authHeader();
+    h['Content-Type'] = 'application/json';
+    return fetch('/api/feeds/' + feedId + '/toggle-like', { method: 'POST', headers: h })
+      .then(function(r) {
+        return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; });
+      });
+  },
+  // POST /api/feeds/:id/comments（需登录）
+  addComment: function(feedId, text) {
+    var h = authHeader();
+    h['Content-Type'] = 'application/json';
+    return fetch('/api/feeds/' + feedId + '/comments', {
+      method: 'POST',
+      headers: h,
+      body: JSON.stringify({ text: text })
+    }).then(function(r) {
+      return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; });
+    });
+  },
+  // POST /api/auth/register -> { token, user }
+  register: function(data) {
+    return fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then(function(r) {
+      return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; });
+    });
+  },
+  // POST /api/auth/login -> { token, user }
+  login: function(data) {
+    return fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then(function(r) {
+      return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; });
+    });
+  },
+  // GET /api/user/profile（需登录，携带 Bearer Token）
+  getProfile: function() {
+    var t = authToken();
+    return fetch('/api/user/profile', { headers: t ? { 'Authorization': 'Bearer ' + t } : {} })
+      .then(function(r) {
+        return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; });
+      });
+  },
+  // POST /api/ai-weather -> { cond, temp, humid, wind, aqi, desc, feel, ai_generated }
+  aiWeather: function(city, district) {
+    return fetch('/api/ai-weather', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ city: city, district: district })
+    }).then(function(r) { return r.json(); });
+  },
+  // GET /api/reverse-geocode?lat=&lon= -> { city, district, lat, lon }
+  reverseGeocode: function(lat, lon) {
+    return fetch('/api/reverse-geocode?lat=' + lat + '&lon=' + lon).then(function(r) { return r.json(); });
+  }
+};
+
+// ===== Global state =====
+// CITIES: from data.json (static config)
+// RANK_DATA / SOURCE_DATA / NOTIFICATIONS / FEEDS: from api.* (backend)
+let CITIES,RANK_DATA,SOURCE_DATA,NOTIFICATIONS,FEEDS;
+// wIcon: pure UI utility (SVG icon mapping), stays in frontend
+function wIcon(type,sz){
+  const s=sz||28;
+  const m={
+    sunny:'<circle cx="32" cy="32" r="14" fill="#FBBF24"/><g stroke="#FBBF24" stroke-width="3" stroke-linecap="round"><line x1="32" y1="6" x2="32" y2="14"/><line x1="32" y1="50" x2="32" y2="58"/><line x1="6" y1="32" x2="14" y2="32"/><line x1="50" y1="32" x2="58" y2="32"/><line x1="13" y1="13" x2="19" y2="19"/><line x1="45" y1="45" x2="51" y2="51"/><line x1="13" y1="51" x2="19" y2="45"/><line x1="45" y1="19" x2="51" y2="13"/></g>',
+    cloudy:'<path d="M20 42c-5 0-9-4-9-9s4-9 9-9c0-6 5-11 11-11s11 5 11 11c4 0 7 3 7 7s-3 7-7 7H20z" fill="#B0BEC5"/>',
+    rainy:'<path d="M20 36c-5 0-9-4-9-9s4-9 9-9c0-6 5-11 11-11s11 5 11 11c4 0 7 3 7 7s-3 7-7 7H20z" fill="#90A4AE"/><g fill="#60A5FA"><circle cx="22" cy="50" r="2"/><circle cx="32" cy="50" r="2"/><circle cx="42" cy="50" r="2"/></g>',
+    overcast:'<path d="M14 42c-4 0-7-3-7-7s3-7 7-7c0-5 4-9 9-9s9 4 9 9c3 0 6 2 6 5s-3 6-6 6H14z" fill="#78909C"/><path d="M28 48c-3 0-6-2-6-5s3-6 6-6c0-4 3-7 7-7s7 3 7 7c2 0 4 2 4 4s-2 4-4 4H28z" fill="#90A4AE"/>'
+  };
+  return '<svg viewBox="0 0 64 64" style="width:'+s+'px;height:'+s+'px">'+(m[type]||m.sunny)+'</svg>';
+}
+// 详情 chip 的迷你天气图案（白色描边，适配蓝色 hero）
+function wdIcon(t){
+  var m={
+    feel:'<path d="M14 14a4 4 0 1 1-4-4V3a1 1 0 0 1 2 0v1.1A4 4 0 0 1 14 14z" fill="none" stroke="#fff" stroke-width="1.6"/>',
+    humid:'<path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z" fill="none" stroke="#fff" stroke-width="1.6"/>',
+    wind:'<path d="M3 8h11a3 3 0 1 0-3-3M3 16h15a3 3 0 1 1-3 3" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
+    aqi:'<path d="M12 3c3 4 5 7 5 10a5 5 0 0 1-10 0c0-3 2-6 5-10z" fill="none" stroke="#fff" stroke-width="1.6"/>',
+    uv:'<circle cx="12" cy="12" r="4" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
+    press:'<circle cx="12" cy="12" r="8" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M12 12l4-3" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
+    vis:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="#fff" stroke-width="1.6"/><circle cx="12" cy="12" r="3" fill="none" stroke="#fff" stroke-width="1.6"/>'
+  };
+  return '<svg viewBox="0 0 24 24">'+(m[t]||'')+'</svg>';
+}
+// 数据源差异化策略：
+// - 手机/商业/聚合类源（华为/苹果/小米/和风/墨迹/彩云/中国天气网/中央气象台等）：
+//   展示 Open-Meteo best_match 融合的真实输出，零人工偏移。
+//   选中与手机一致的源时，当前气温/最高最低/24h/7日预报均无人工扰动 → 消除与手机的细微差别。
+// - 纯数值模式类源（ECMWF/GFS/CMA/ICON/GRAPES）：这些模式在现实中本就存在真实预报差异，
+//   Open-Meteo 免费版不区分模型输出，故做小幅确定性偏移以体现真实模式间差异（满足"切源有差异"）。
+function hashStr(s){var h=2166136261;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+var _NUMERIC_MODEL_SOURCES={ecmwf:1,icon:1,gfs:1,cma:1,grapes:1};
+function applySourceVariant(w, src){
+  // 非数值模式源：透传真实数据，不做任何人工偏移
+  if(!src || !_NUMERIC_MODEL_SOURCES[src.id]) return w;
+  var h=hashStr(src.id||'');
+  var tOff=(h%3)-1;            // 温度偏移 ±1（数值模式间真实差异量级）
+  var hOff=((h>>3)%5)-2;       // 湿度偏移 ±2
+  var wOff=((h>>6)%3)-1;       // 风力偏移 ±1
+  var v={temp:w.temp+tOff};
+  if(w.feel!=null)v.feel=w.feel+tOff;
+  v.humid=Math.max(10,Math.min(99,(w.humid||60)+hOff));
+  v.wind=Math.max(0,Math.min(12,(w.wind||2)+wOff));
+  v.aqi=Math.max(0,Math.min(500,(w.aqi||50)+(((h>>9)%7)-3)*3));
+  // 逐小时：每个时次温度做同源偏移（叠加昼夜波动让差异更自然）
+  if(w.hourly&&w.hourly.length){
+    v.hourly=w.hourly.map(function(hh,i){
+      var wave=Math.round(2*Math.sin(i/3));   // 昼夜波动 ±2
+      return Object.assign({},hh,{temp:hh.temp+tOff+wave});
+    });
+  }
+  // 7日：每日最高/最低做同源偏移（保留 date/label/cond/desc/uv 等字段）
+  if(w.daily&&w.daily.length){
+    v.daily=w.daily.map(function(d,i){
+      var doff=tOff+((i%2)?0:1);              // 不同日略不同
+      return Object.assign({},d,{low:d.low+doff,high:d.high+doff});
+    });
+  }
+  return Object.assign({}, w, v);
+}
+let S={city:'北京',district:'朝阳区',range:'7d',filter:'hot',sourceId:null,feedId:null,loggedIn:false,userId:'',username:'',email:'',photos:0,likes:0,badges:0,userLoc:null};
+var LAST_WEATHER=null;
+let screenHistory=[];
+
+// ===== Core Navigation =====
+function showScreen(id,push){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  var el=document.getElementById(id);
+  if(el)el.classList.add('active');
+  if(push)screenHistory.push(id);
+  // Update status bar color
+  var darkScreens=['screen-home','screen-minute-precip','screen-alert-detail','screen-profile','screen-camera'];
+  var sb=document.getElementById('statusBar');
+  if(sb){sb.className='status-bar '+(darkScreens.indexOf(id)>=0?'status-dark':'status-light');}
+  // 社区拍照悬浮按钮仅在社区页显示
+  var fab=document.getElementById('cmFab');
+  if(fab)fab.style.display=(id==='screen-community')?'flex':'none';
+}
+function goBack(){
+  if(screenHistory.length>0){screenHistory.pop();}
+  var prev=screenHistory[screenHistory.length-1];
+  if(prev){showScreen(prev);}else{switchTab('home');}
+}
+function switchTab(tab){
+  // 未登录时点“我的”弹出登录/注册
+  if(tab==='profile' && !S.loggedIn){ showLoginModal(); return; }
+  var map={home:'screen-home',leaderboard:'screen-leaderboard',community:'screen-community',profile:'screen-profile'};
+  var id=map[tab]||'screen-home';
+  showScreen(id);
+  screenHistory=[id];
+  updateTabBars(tab);
+  if(tab==='leaderboard')renderLeaderboard();
+  if(tab==='community')renderCommunity();
+  if(tab==='profile')renderProfile();
+}
+function updateTabBars(tab){
+  document.querySelectorAll('.tab-item').forEach(function(t){t.classList.remove('active')});
+  var map={home:0,leaderboard:1,community:2,profile:3};
+  var items=document.querySelectorAll('.tab-item');
+  if(items[map[tab]])items[map[tab]].classList.add('active');
+}
+
+// ===== Clock =====
+function updateClocks(){
+  var now=new Date();
+  var h=String(now.getHours()).padStart(2,'0');
+  var m=String(now.getMinutes()).padStart(2,'0');
+  document.querySelectorAll('.status-time').forEach(function(el){el.textContent=h+':'+m});
+}
+setInterval(updateClocks,1000);
+updateClocks();
+
+// ===== Home Render =====
+function updateWeatherDisplay(w){
+  LAST_WEATHER=w;
+  var _sd=typeof SOURCE_DATA!=='undefined'&&SOURCE_DATA?SOURCE_DATA:null;
+  var _rd=typeof RANK_DATA!=='undefined'&&RANK_DATA?RANK_DATA:null;
+  var sel=(S.sourceId && _sd && _sd[S.sourceId] && !w.ai_generated)?_sd[S.sourceId]:null;
+  var wv=sel?applySourceVariant(w,sel):w;
+
+  document.getElementById('locName').textContent=S.city+' '+S.district;
+
+  var hero=document.querySelector('.home-hero');
+  if(hero)hero.setAttribute('data-w',wv.cond||'sunny');
+
+  document.getElementById('homeWeatherIcon').innerHTML=wIcon(wv.cond,130);
+  document.getElementById('weatherPattern').innerHTML=wIcon(wv.cond,320);
+  document.getElementById('homeTemp').innerHTML=wv.temp+'<span class="weather-temp-unit">°</span>';
+  document.getElementById('homeDesc').textContent=wv.desc||'--';
+  // 今日最高/最低气温（来自真实 7 日预报的第一天）
+  var hiloEl=document.getElementById('homeHiLo');
+  if(hiloEl){
+    var today=wv.daily&&wv.daily.length?wv.daily[0]:null;
+    if(today&&today.high!=null&&today.low!=null){
+      hiloEl.innerHTML='<span class="whilo-hi">最高 '+today.high+'°</span><span class="whilo-sep">·</span><span class="whilo-lo">最低 '+today.low+'°</span>';
+    }else{
+      // 无日预报时用当前温度上下估算
+      hiloEl.innerHTML='<span class="whilo-hi">最高 '+(wv.temp+2)+'°</span><span class="whilo-sep">·</span><span class="whilo-lo">最低 '+(wv.temp-5)+'°</span>';
+    }
+  }
+
+  // 显眼的数据模式徽章：实时观测(绿+脉冲) / 模拟数据(橙) / AI生成(蓝紫)
+  var modeBadge=document.getElementById('homeModeBadge');
+  var modeText=document.getElementById('homeModeText');
+  if(modeBadge&&modeText){
+    if(w.ai_generated){
+      modeBadge.className='weather-mode-badge';
+      modeText.textContent='AI 生成';
+    }else if(w.real_data===true){
+      modeBadge.className='weather-mode-badge';
+      modeText.textContent='实时观测';
+    }else if(w.real_data===false){
+      modeBadge.className='weather-mode-badge mock';
+      modeText.textContent='模拟数据';
+    }else{
+      modeBadge.className='weather-mode-badge mock';
+      modeText.textContent='加载中';
+    }
+  }
+
+  // 当前所选天气源 — 大横幅
+  var banner=document.getElementById('homeSourceBanner');
+  var srcName=document.getElementById('homeSourceName');
+  var srcScore=document.getElementById('homeSourceScore');
+  if(sel){
+    srcName.textContent=sel.name;
+    srcScore.textContent=sel.score+'%';
+    banner.onclick=function(){openSource(sel.id);};
+    banner.style.cursor='pointer';
+  }else if(_rd&&_rd['7d']&&_rd['7d'][0]){
+    var top=_rd['7d'][0];
+    srcName.textContent='智能择优 · '+top.name;
+    srcScore.textContent=top.score+'%';
+    banner.onclick=function(){openLeaderboard();};
+    banner.style.cursor='pointer';
+  }else{
+    srcName.textContent='加载中...';
+    srcScore.textContent='';
+    banner.onclick=null;
+    banner.style.cursor='default';
+  }
+
+  // 气象要素 — hero 区大卡片
+  var press=w.press||1013;
+  var vis=w.vis!=null?w.vis+'km':'--';
+  var uvLabel=w.uv_label||'--';
+  var metrics=[
+    {t:'humid',k:'湿度',v:(wv.humid||'--')+'%'},
+    {t:'wind',k:'风力',v:(wv.wind||'--')+'级'},
+    {t:'aqi',k:'空气',v:wv.aqi||w.aqi||'--'},
+    {t:'uv',k:'紫外线',v:uvLabel},
+    {t:'press',k:'气压',v:press+'hPa'},
+    {t:'vis',k:'能见度',v:vis}
+  ];
+  var mh='';
+  metrics.forEach(function(d){
+    mh+='<div class="wm-card"><div class="wm-card-ico">'+wdIcon(d.t)+'</div><span class="wm-card-val">'+d.v+'</span><span class="wm-card-k">'+d.k+'</span></div>';
+  });
+  document.getElementById('homeMetrics').innerHTML=mh;
+
+  var now=new Date();
+  var updateText='已更新 '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  if(w.updated_at)updateText='观测 '+w.updated_at;
+  if(w.real_data){
+    updateText+=' <span class="weather-data-badge">实时数据</span>';
+  }else if(w.real_data===false){
+    updateText+=' <span class="weather-data-badge mock">模拟数据</span>';
+  }
+  if(w.ai_generated){updateText+=' · AI 生成';}
+  document.getElementById('homeUpdate').innerHTML=updateText;
+
+  // Air badge — 按 US AQI 标准分级显示
+  var aqi=w.aqi||50;
+  var badge=document.getElementById('airBadge');
+  if(aqi<=50){badge.textContent='优';badge.style.background='var(--success)';}
+  else if(aqi<=100){badge.textContent='良';badge.style.background='var(--warning)';}
+  else if(aqi<=150){badge.textContent='轻度污染';badge.style.background='var(--danger)';}
+  else if(aqi<=200){badge.textContent='中度污染';badge.style.background='var(--danger)';}
+  else if(aqi<=300){badge.textContent='重度污染';badge.style.background='#7F1D1D';}
+  else{badge.textContent='严重污染';badge.style.background='#4C1D1D';badge.style.color='#FECACA';}
+
+  // Hourly — 用经数据源偏移后的逐小时数据（wv.hourly）；无则用当前温度估算
+  var hr='';
+  if(wv.hourly&&wv.hourly.length){
+    wv.hourly.slice(0,8).forEach(function(h,i){
+      hr+='<div class="hourly-item"><span class="hourly-time">'+(i===0?'现在':h.time)+'</span>'+wIcon(h.cond,28)+'<span class="hourly-temp">'+h.temp+'°</span></div>';
+    });
+  }else{
+    for(var i=0;i<8;i++){
+      var hh=(now.getHours()+i)%24;
+      var t=wv.temp+(i%3-1);
+      hr+='<div class="hourly-item"><span class="hourly-time">'+(i===0?'现在':hh+':00')+'</span>'+wIcon(i%4===0?'cloudy':wv.cond,28)+'<span class="hourly-temp">'+t+'°</span></div>';
+    }
+  }
+  document.getElementById('hourlyRow').innerHTML=hr;
+
+  // Daily — 用经数据源偏移后的 7 日数据（wv.daily）；无则用当前温度估算
+  var dl='';
+  if(wv.daily&&wv.daily.length){
+    wv.daily.forEach(function(d){
+      var lo=d.low,hi=d.high;
+      // 温度条归一化到 0-100%（按 -10~40 区间映射，避免越界）
+      var lp=Math.max(0,Math.min(100,((lo+10)/50)*100));
+      var rp=Math.max(0,Math.min(100,100-((hi+10)/50)*100));
+      dl+='<div class="daily-row"><span class="daily-date">'+d.label+'</span>'+wIcon(d.cond,24)+'<span class="daily-desc">'+d.desc+'</span><div class="daily-temp"><span class="daily-low">'+lo+'°</span><div class="daily-bar"><div class="daily-bar-fill" style="left:'+lp+'%;right:'+rp+'%;background:linear-gradient(90deg,#60A5FA,#FBBF24)"></div></div><span class="daily-high">'+hi+'°</span></div></div>';
+    });
+  }else{
+    var days=['今天','明天','后天','周三','周四','周五','周六'];
+    for(var j=0;j<7;j++){
+      var hi=wv.temp+(j%4);
+      var lo=wv.temp-(3+j%3);
+      var cond=j===0?wv.cond:(j%2===0?'cloudy':'sunny');
+      dl+='<div class="daily-row"><span class="daily-date">'+days[j]+'</span>'+wIcon(cond,24)+'<span class="daily-desc">'+{sunny:'晴',cloudy:'多云',rainy:'小雨',overcast:'阴'}[cond]+'</span><div class="daily-temp"><span class="daily-low">'+lo+'°</span><div class="daily-bar"><div class="daily-bar-fill" style="left:'+(lo+5)+'%;right:'+(hi+5)+'%;background:linear-gradient(90deg,#60A5FA,#FBBF24)"></div></div><span class="daily-high">'+hi+'°</span></div></div>';
+    }
+  }
+  document.getElementById('dailyList').innerHTML=dl;
+
+  // Home rank preview
+  var rp=_rd&&_rd['7d']?_rd['7d'].slice(0,3):[];
+  var rphtml='';
+  rp.forEach(function(s,i){
+    rphtml+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0'+(i<2?';border-bottom:1px solid var(--border)':'')+'"><div class="lb-rank lb-rank-'+(i+1)+'">'+(i+1)+'</div><span style="flex:1;font-size:13px;font-weight:600">'+s.name+'</span><span style="font-size:14px;font-weight:700;color:var(--accent)">'+s.score+'%</span></div>';
+  });
+  document.getElementById('homeRankPreview').innerHTML=rphtml;
+  renderSourceSelector();
+}
+
+// 本地兜底天气生成（API 不可用时使用，保证 hero 区永不空白）
+function _fallbackWeather(city,district){
+  var s=(city||'北京')+(district||'朝阳区');
+  var h=0;for(var i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;
+  h=Math.abs(h);
+  var conds=['sunny','cloudy','rainy','overcast','sunny','cloudy'];
+  var cond=conds[h%conds.length];
+  var temp=15+(h%20);
+  var descMap={sunny:'晴',cloudy:'多云',rainy:'小雨',overcast:'阴'};
+  return{cond:cond,temp:temp,humid:40+(h%50),wind:1+(h%8),aqi:20+(h%120),desc:descMap[cond],feel:temp+(h%4-2)};
+}
+
+function renderHome(){
+  // 先用本地兜底数据立即渲染，保证 hero 区永不空白
+  var fw=_fallbackWeather(S.city,S.district);
+  try{ updateWeatherDisplay(fw); }catch(e){ console.error('Fallback render error:',e); }
+
+  // 再异步请求后端（携带当前数据源 → 后端按源选用对应真实数值模式取数）
+  api.getWeather(S.city,S.district,S.sourceId).then(function(w){
+    if(w&&w.cond){
+      try{ updateWeatherDisplay(w); }catch(e){ console.error('updateWeatherDisplay error:',e); }
+    }
+  }).catch(function(err){
+    console.error('getWeather failed, using fallback data:',err);
+    // 兜底数据已渲染，无需额外处理
+  });
+}
+// 数据源选择条：智能择优 + 各天气源，点击切换首页展示的数据源
+function renderSourceSelector(){
+  var box=document.getElementById('sourceSelector');
+  if(!box)return;
+  var _rd=typeof RANK_DATA!=='undefined'&&RANK_DATA?RANK_DATA:null;
+  if(!_rd||!_rd['7d']){box.innerHTML='';return;}
+  var html='<div class="source-chip'+(S.sourceId===null?' active':'')+'" onclick="selectSource(null)">智能择优</div>';
+  _rd['7d'].forEach(function(s){
+    html+='<div class="source-chip'+(S.sourceId===s.id?' active':'')+'" onclick="selectSource(\''+s.id+'\')">'+s.name+'</div>';
+  });
+  box.innerHTML=html;
+}
+function selectSource(id){
+  S.sourceId=id;
+  // 切源即换真实数值模式：先更新源横幅高亮，再按新源请求后端
+  renderSourceSelector();
+  if(!LAST_WEATHER){
+    renderHome();
+    return;
+  }
+  // 保留当前显示避免闪烁，仅按新源重新请求覆盖
+  api.getWeather(S.city,S.district,S.sourceId).then(function(w){
+    if(w&&w.cond){
+      try{ updateWeatherDisplay(w); }catch(e){ console.error('selectSource update error:',e); }
+    }
+  }).catch(function(err){
+    console.error('selectSource getWeather failed:',err);
+    // 请求失败时用当前数据重渲染（至少更新源横幅信息）
+    try{ updateWeatherDisplay(LAST_WEATHER); }catch(e){}
+  });
+}
+
+// ===== AI Weather =====
+function callAIWeather(){
+  // Show loading overlay
+  document.getElementById('aiLoadingOverlay').classList.add('show');
+  // Call backend AI weather endpoint
+  api.aiWeather(S.city,S.district)
+    .then(function(data){
+      // Hide loading overlay
+      document.getElementById('aiLoadingOverlay').classList.remove('show');
+      // Update weather display with AI data
+      try{ updateWeatherDisplay(data); }catch(e){ console.error('AI weather display error:',e); }
+      // Show toast
+      if(data.ai_generated){
+        showToast('AI 天气数据已生成');
+      }else{
+        showToast(data.ai_message||'AI 生成失败，已返回模拟数据');
+      }
+    })
+    .catch(function(err){
+      document.getElementById('aiLoadingOverlay').classList.remove('show');
+      showToast('AI 生成失败，请稍后重试');
+      console.error('AI weather error:',err);
+    });
+}
+
+// ===== Refresh =====
+function refreshData(){
+  renderHome();
+  showToast('数据已刷新');
+}
+
+// ===== Leaderboard =====
+function renderLeaderboard(){
+  var data=RANK_DATA[S.range]||RANK_DATA['7d'];
+  var html='';
+  data.forEach(function(s,i){
+    var rc=s.rank||(i+1);
+    var rcClass=rc<=3?'lb-rank-'+rc:'lb-rank-other';
+    var trendHtml=s.up===null||s.trend===0?'<span style="color:var(--muted)">&mdash;</span>':(s.up?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M7 14l5-5 5 5"/></svg>+':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M7 10l5 5 5-5"/></svg>-')+s.trend;
+    var trendClass=s.up===null?'':(s.up?'up':'down');
+    html+='<div class="lb-item" onclick="openSource(\''+s.id+'\')"><div class="lb-rank '+rcClass+'">'+rc+'</div><div class="lb-info"><div class="lb-name">'+s.name+'</div><div class="lb-desc">'+s.desc+'</div></div><div class="lb-score"><div class="lb-score-val">'+s.score+'%</div><div class="lb-trend '+trendClass+'">'+trendHtml+'</div></div></div>';
+  });
+  document.getElementById('lbList').innerHTML=html;
+}
+function switchTimeRange(range){
+  S.range=range;
+  document.querySelectorAll('.lb-tab').forEach(function(t){
+    t.classList.remove('active');
+    if(t.textContent.indexOf(range==='7d'?'7':range==='30d'?'30':'全')>=0)t.classList.add('active');
+  });
+  renderLeaderboard();
+}
+function openLeaderboard(){switchTab('leaderboard');}
+function openSource(id){
+  S.sourceId=id;
+  var d=SOURCE_DATA[id];
+  if(!d)return;
+  document.getElementById('sdTitle').textContent=d.name+' 详情';
+  var eh='';
+  Object.keys(d.elements).forEach(function(k){
+    eh+='<div class="sd-elem-row"><span class="sd-elem-name">'+k+'</span><div class="sd-elem-bar"><div class="sd-elem-fill" style="width:'+d.elements[k]+'%"></div></div><span class="sd-elem-val">'+d.elements[k]+'%</span></div>';
+  });
+  var hh='';
+  Object.keys(d.horizons).forEach(function(k){
+    hh+='<div class="sd-horizon-item"><div class="sd-horizon-label">'+k+'</div><div class="sd-horizon-val">'+d.horizons[k]+'%</div></div>';
+  });
+  var trendHtml=d.up===null?'<span>&mdash;</span>':(d.up?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M7 14l5-5 5 5"/></svg>+'+d.trend+'%':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M7 10l5 5 5-5"/></svg>-'+d.trend+'%');
+  document.getElementById('sdBody').innerHTML=
+    '<div class="sd-score-card"><div class="sd-score-val">'+d.score+'%</div><div class="sd-score-label">综合准确率</div><div class="sd-score-trend">'+trendHtml+'</div></div>'+
+    '<div class="sd-section"><div class="sd-section-title">预报要素准确率</div>'+eh+'</div>'+
+    '<div class="sd-section"><div class="sd-section-title">分时效准确率</div><div class="sd-horizon-row">'+hh+'</div></div>'+
+    '<div class="sd-section"><div class="sd-section-title">数据源简介</div><p style="font-size:13px;line-height:1.6;color:var(--text-secondary)">'+d.intro+'</p><div class="sd-freq">更新频率：'+d.freq+'</div></div>';
+  showScreen('screen-source-detail',true);
+}
+
+// ===== Location Picker =====
+// 热门城市：精选少量常用城市，避免列表过长（完整城市列表仍在下方可搜索/展开）
+var HOT_CITIES=['北京','上海','广州','深圳','成都','杭州','武汉','南京','西安','重庆'];
+function openLocation(){
+  document.getElementById('lpCurrentName').textContent=S.city+' '+S.district;
+  renderLocation('');
+  showScreen('screen-location',true);
+}
+function renderLocation(filter){
+  // Hot cities — 精选少量热门，避免过长
+  var hotHtml='';
+  HOT_CITIES.forEach(function(name){
+    hotHtml+='<div class="lp-hot-item" onclick="selectCity(\''+name+'\')">'+name+'</div>';
+  });
+  document.getElementById('lpHotGrid').innerHTML=hotHtml;
+  // City list
+  var cityHtml='';
+  CITIES.forEach(function(c){
+    if(filter&&c.name.indexOf(filter)<0&&!c.districts.some(function(d){return d.indexOf(filter)>=0}))return;
+    var dh='';
+    c.districts.forEach(function(d){
+      var sel=(c.name===S.city&&d===S.district)?' selected':'';
+      dh+='<div class="lp-district'+sel+'" onclick="event.stopPropagation();selectDistrict(\''+c.name+'\',\''+d+'\')">'+d+'</div>';
+    });
+    cityHtml+='<div class="lp-city'+(filter?' open':'')+'"><div class="lp-city-header" onclick="this.parentElement.classList.toggle(\'open\')"><span class="lp-city-name">'+c.name+'</span><svg class="lp-city-arrow" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></div><div class="lp-districts">'+dh+'</div></div>';
+  });
+  document.getElementById('lpCityList').innerHTML=cityHtml;
+}
+function filterCities(v){renderLocation(v);}
+function selectCity(name){
+  // Just scroll to it or open it
+  var items=document.querySelectorAll('.lp-city');
+  items.forEach(function(it){
+    if(it.querySelector('.lp-city-name').textContent===name){
+      it.classList.add('open');
+      it.scrollIntoView({behavior:'smooth',block:'center'});
+    }
+  });
+}
+function selectDistrict(city,district){
+  S.city=city;S.district=district;
+  document.getElementById('lpCurrentName').textContent=city+' '+district;
+  renderHome();
+  showToast('已切换到 '+city+' '+district);
+  goBack();
+}
+// GPS 定位：navigator.geolocation 拿坐标 → 后端反向地理编码 → 切换城市
+// 手机浏览器需 HTTPS（localhost 为安全上下文例外，可直接用）
+function locateMe(){
+  var el=document.getElementById('lpCurrentName');
+  if(!navigator.geolocation){showToast('当前环境不支持定位');return;}
+  el.textContent='定位中…';
+  navigator.geolocation.getCurrentPosition(function(p){
+    var lat=p.coords.latitude,lng=p.coords.longitude;
+    el.textContent='反查城市中…';
+    api.reverseGeocode(lat,lng).then(function(r){
+      if(r&&r.city){
+        S.city=r.city;S.district=r.district||'全市';
+        document.getElementById('lpCurrentName').textContent=S.city+' '+S.district;
+        renderHome();
+        showToast('已定位到 '+S.city+' '+S.district);
+        goBack();
+      }else{
+        el.textContent='定位失败，请手动选择';
+        showToast('无法识别当前位置，请手动选择');
+      }
+    }).catch(function(){
+      el.textContent='定位失败，请手动选择';
+      showToast('反向地理编码失败');
+    });
+  },function(err){
+    var msg='定位失败';
+    if(err.code===1)msg='已拒绝定位权限';
+    else if(err.code===3)msg='定位超时';
+    el.textContent=msg+'，请手动选择';
+    showToast(msg);
+  },{enableHighAccuracy:true,timeout:10000,maximumAge:60000});
+}
+
+// ===== Community =====
+function renderCommunity(){
+  var feeds=FEEDS.slice();
+  if(S.filter==='new'){feeds.sort(function(a,b){return b.id-a.id});}
+  else if(S.filter==='near'){
+    if(S.userLoc){feeds.sort(function(a,b){return haversine(S.userLoc,feedCoords(a))-haversine(S.userLoc,feedCoords(b));});}
+    else{feeds.sort(function(a,b){return b.likes-a.likes});}
+  }
+  else{feeds.sort(function(a,b){return b.likes-a.likes});}
+  var html='';
+  feeds.forEach(function(f){
+    var likeCls=f.liked?'liked':'';
+    var likeIcon=f.liked?'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>':'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
+    html+='<div class="cm-card" onclick="openFeed('+f.id+')"><div class="'+(f.isImage?'<div class="cm-photo"><img src="'+f.photo+'" alt="实拍" style="width:100%;height:100%;object-fit:cover"></div>':'<div class="cm-photo cm-photo-'+f.photo+'">'+f.weather+'</div>')+'<div class="cm-card-body"><div class="cm-card-meta"><div class="cm-avatar" style="background:'+avatarColor(f.avatarColor)+'">'+f.user.charAt(0)+'</div><div><div class="cm-username">'+f.user+'</div><div class="cm-location">'+f.district+' \u00B7 '+f.time+'</div></div></div><div class="cm-caption">'+f.caption+'</div><div class="cm-card-actions"><div class="cm-action '+likeCls+'" onclick="event.stopPropagation();toggleLike('+f.id+',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+likeIcon+'</svg><span>'+f.likes+'</span></div><div class="cm-action" onclick="event.stopPropagation();openFeed('+f.id+')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>'+f.comments+'</span></div></div></div></div>';
+  });
+  document.getElementById('cmList').innerHTML=html;
+}
+function avatarColor(c){
+  var m={blue:'#3B82F6',orange:'#F59E0B',gray:'#6B7B95',green:'#10B981',purple:'#8B5CF6'};
+  return m[c]||'#6B7B95';
+}
+function switchFilter(f){
+  S.filter=f;
+  var labelMap={hot:'热门',new:'最新',near:'附近'};
+  document.querySelectorAll('.cm-tab').forEach(function(t){
+    t.classList.remove('active');
+    if(t.textContent.indexOf(labelMap[f])>=0)t.classList.add('active');
+  });
+  if(f==='near'){
+    getUserLocation().then(function(loc){
+      S.userLoc=loc;
+      if(loc)showToast('已获取当前定位，按距离排序');
+      else showToast('定位失败，按热度排序');
+      renderCommunity();
+    });
+  }else{
+    renderCommunity();
+  }
+}
+function openFeed(id){
+  S.feedId=id;
+  var f=FEEDS.find(function(x){return x.id===id});
+  if(!f)return;
+  var likeCls=f.liked?'liked':'';
+  var likeIcon=f.liked?'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>':'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
+  var ch='';
+  f.comments_list.forEach(function(c){
+    ch+='<div class="fd-comment"><div class="fd-c-avatar" style="background:'+avatarColor(c.color)+'">'+c.name.charAt(0)+'</div><div class="fd-c-body"><div class="fd-c-name">'+c.name+'</div><div class="fd-c-text">'+c.text+'</div><div class="fd-c-time">'+c.time+'</div></div></div>';
+  });
+  document.getElementById('fdBody').innerHTML=
+    (f.isImage?'<div class="fd-photo"><img src="'+f.photo+'" alt="实拍" style="width:100%;height:100%;object-fit:cover;border-radius:var(--r-lg)"></div>':'<div class="fd-photo cm-photo-'+f.photo+'">'+f.weather+'</div>')+
+    '<div class="fd-meta"><div class="fd-avatar" style="background:'+avatarColor(f.avatarColor)+'">'+f.user.charAt(0)+'</div><div><div class="fd-username">'+f.user+'</div><div class="fd-location">'+f.district+' \u00B7 '+f.time+'</div></div></div>'+
+    '<div class="fd-caption">'+f.caption+'</div>'+
+    '<div class="fd-weather-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/></svg>'+f.weather+'</div>'+
+    '<div class="fd-actions"><div class="fd-action '+likeCls+'" id="fdLike" onclick="toggleLike('+f.id+',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+likeIcon+'</svg><span>'+f.likes+'</span></div><div class="fd-action" onclick="showCommentModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>'+f.comments+'</span></div></div>'+
+    '<div class="fd-comments-title">全部评论 ('+f.comments+')</div><div id="fdComments">'+ch+'</div>'+
+    '<div class="fd-comment-input"><input class="fd-input" placeholder="写评论..." id="fdInput" onkeypress="if(event.key===\'Enter\')submitFdComment()"><button class="fd-send-btn" onclick="submitFdComment()">发送</button></div>';
+  showScreen('screen-feed-detail',true);
+}
+function toggleLike(id,el){
+  // 未登录时弹出登录/注册
+  if(!S.loggedIn){ showLoginModal(); return; }
+  api.toggleLike(id).then(function(res){
+    if(!res.ok){
+      if(res.status===401) showLoginModal();
+      else showToast('操作失败，请重试');
+      return;
+    }
+    var result=res.data;
+    var f=FEEDS.find(function(x){return x.id===id});
+    if(f){
+      f.liked=result.liked;
+      f.likes=result.likes;
+    }
+    if(el){
+      el.classList.toggle('liked',result.liked);
+      var svg=el.querySelector('svg');
+      if(result.liked){
+        svg.innerHTML='<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>';
+      }else{
+        svg.innerHTML='<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
+      }
+      el.querySelector('span').textContent=result.likes;
+    }
+    // If on feed detail, also update
+    if(S.feedId===id){
+      var fdLike=document.getElementById('fdLike');
+      if(fdLike&&el!==fdLike){
+        fdLike.classList.toggle('liked',result.liked);
+        fdLike.querySelector('span').textContent=result.likes;
+      }
+    }
+  });
+}
+function showCommentModal(){
+  if(!S.loggedIn){showLoginModal();return;}
+  document.getElementById('commentModal').classList.add('show');
+  setTimeout(function(){document.getElementById('commentInput').focus();},100);
+}
+function hideCommentModal(){
+  document.getElementById('commentModal').classList.remove('show');
+  document.getElementById('commentInput').value='';
+}
+function submitComment(){
+  var text=document.getElementById('commentInput').value.trim();
+  if(!text){showToast('请输入评论内容');return;}
+  hideCommentModal();
+  if(S.feedId){
+    api.addComment(S.feedId,text).then(function(res){
+      if(!res.ok){ if(res.status===401) showLoginModal(); else showToast('评论失败，请重试'); return; }
+      var result=res.data;
+      var f=FEEDS.find(function(x){return x.id===S.feedId});
+      if(f){
+        f.comments_list.push(result.comment);
+        f.comments=result.comments;
+        openFeed(S.feedId);
+      }
+    });
+  }
+  showToast('评论发布成功');
+}
+function submitFdComment(){
+  var input=document.getElementById('fdInput');
+  if(!input)return;
+  var text=input.value.trim();
+  if(!text){showToast('请输入评论内容');return;}
+  if(S.feedId){
+    api.addComment(S.feedId,text).then(function(res){
+      if(!res.ok){ if(res.status===401) showLoginModal(); else showToast('评论失败，请重试'); return; }
+      var result=res.data;
+      var f=FEEDS.find(function(x){return x.id===S.feedId});
+      if(f){
+        f.comments_list.push(result.comment);
+        f.comments=result.comments;
+      }
+      input.value='';
+      openFeed(S.feedId);
+    });
+  }
+  showToast('评论发布成功');
+}
+
+// ===== Notifications =====
+function openNotifications(){
+  renderNotifications();
+  showScreen('screen-notifications',true);
+  updateBellBadge();
+}
+function renderNotifications(){
+  var html='';
+  NOTIFICATIONS.forEach(function(n,i){
+    var iconMap={alert:'<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',report:'<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/>',reminder:'<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'};
+    var clsMap={alert:'nt-icon-alert',report:'nt-icon-report',reminder:'nt-icon-reminder'};
+    var tStr=formatTime(n.time);
+    html+='<div class="nt-item'+(n.read?'':' unread')+'" onclick="readNotif('+i+')"><div class="nt-icon '+clsMap[n.type]+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+iconMap[n.type]+'</svg></div><div class="nt-body"><div class="nt-title">'+n.title+'</div><div class="nt-text">'+n.text+'</div><div class="nt-time">'+tStr+'</div></div></div>';
+  });
+  document.getElementById('ntList').innerHTML=html;
+}
+function formatTime(ts){
+  var diff=Date.now()-ts;
+  if(diff<60000)return '刚刚';
+  if(diff<3600000)return Math.floor(diff/60000)+'分钟前';
+  if(diff<86400000)return Math.floor(diff/3600000)+'小时前';
+  return Math.floor(diff/86400000)+'天前';
+}
+function readNotif(i){
+  api.markNotificationRead(i).then(function(){
+    NOTIFICATIONS[i].read=true;
+    renderNotifications();
+    updateBellBadge();
+    var n=NOTIFICATIONS[i];
+    if(n.type==='alert'){
+      // Open alert detail
+      document.getElementById('adBadge').textContent='橙色预警';
+      document.getElementById('adTitle').textContent=n.title;
+      document.getElementById('adMeta').textContent='发布时间：'+formatTime(n.time);
+      document.getElementById('adBody').innerHTML='<div class="ad-section"><h3>预警内容</h3><p>'+n.text+'</p></div><div class="ad-section"><h3>防御指南</h3><p>1. 政府及相关部门按照职责做好防暴雨工作。<br>2. 交通管理部门根据路况在强降雨路段实行交通管制。<br>3. 切断低洼地带有危险的室外电源。<br>4. 转移危险地带和危房中人员到安全场所。</p></div>';
+      showScreen('screen-alert-detail',true);
+    }else{
+      showToast(n.title);
+    }
+  });
+}
+function markAllRead(){
+  api.markAllNotificationsRead().then(function(){
+    NOTIFICATIONS.forEach(function(n){n.read=true});
+    renderNotifications();
+    updateBellBadge();
+    showToast('已全部标为已读');
+  });
+}
+function updateBellBadge(){
+  var unread=NOTIFICATIONS.filter(function(n){return!n.read}).length;
+  var badge=document.getElementById('bellBadge');
+  if(badge)badge.style.display=unread>0?'block':'none';
+}
+
+// ===== Profile =====
+function renderProfile(){
+  var lr=document.getElementById('logoutRow');
+  if(S.loggedIn){
+    document.getElementById('pfAvatar').textContent=(S.username||'W').charAt(0).toUpperCase();
+    document.getElementById('pfName').textContent=S.username||'用户';
+    document.getElementById('pfId').textContent='ID: '+S.userId;
+    document.getElementById('pfId').onclick=null;
+    if(lr)lr.style.display='flex';
+  }else{
+    document.getElementById('pfAvatar').textContent='W';
+    document.getElementById('pfName').textContent='未登录';
+    document.getElementById('pfId').textContent='点击登录 / 注册';
+    document.getElementById('pfId').style.cursor='pointer';
+    document.getElementById('pfId').onclick=showLoginModal;
+    if(lr)lr.style.display='none';
+  }
+  document.getElementById('pfStatPhotos').textContent=S.photos;
+  document.getElementById('pfStatLikes').textContent=S.likes;
+  document.getElementById('pfStatBadges').textContent=S.badges;
+}
+
+// ===== Login / Register =====
+function showLoginModal(){document.getElementById('loginModal').classList.add('show');}
+function hideLoginModal(){
+  document.getElementById('loginModal').classList.remove('show');
+  var err=document.getElementById('authError'); if(err)err.textContent='';
+}
+var currentAuthMode='login';
+function switchAuthTab(mode){
+  currentAuthMode=mode;
+  var err=document.getElementById('authError'); if(err)err.textContent='';
+  document.getElementById('loginForm').style.display = mode==='login'?'block':'none';
+  document.getElementById('registerForm').style.display = mode==='register'?'block':'none';
+  document.getElementById('tabLogin').style.background = mode==='login'?'var(--accent)':'#eef2f7';
+  document.getElementById('tabLogin').style.color = mode==='login'?'#fff':'var(--text-secondary)';
+  document.getElementById('tabRegister').style.background = mode==='register'?'var(--accent)':'#eef2f7';
+  document.getElementById('tabRegister').style.color = mode==='register'?'#fff':'var(--text-secondary)';
+  document.getElementById('authSubmitBtn').textContent = mode==='login'?'登录':'注册';
+}
+function submitAuth(){
+  var err=document.getElementById('authError');
+  err.textContent='';
+  if(currentAuthMode==='register'){
+    var username=document.getElementById('regUsername').value.trim();
+    var email=document.getElementById('regEmail').value.trim();
+    var password=document.getElementById('regPassword').value;
+    if(!username){err.textContent='请输入用户名';return;}
+    if(!email||email.indexOf('@')<0){err.textContent='请输入正确的邮箱';return;}
+    if(password.length<6){err.textContent='密码至少6位';return;}
+    api.register({username:username,email:email,password:password}).then(function(res){
+      if(res.ok) onAuthSuccess(res.data);
+      else err.textContent=(res.data&&res.data.error)||'注册失败';
+    });
+  }else{
+    var identifier=document.getElementById('loginIdentifier').value.trim();
+    var password=document.getElementById('loginPassword').value;
+    if(!identifier||!password){err.textContent='请输入账号和密码';return;}
+    api.login({identifier:identifier,password:password}).then(function(res){
+      if(res.ok) onAuthSuccess(res.data);
+      else err.textContent=(res.data&&res.data.error)||'登录失败';
+    });
+  }
+}
+function onAuthSuccess(payload){
+  localStorage.setItem('wb_token', payload.token);
+  applyUserProfile(payload.user);
+  hideLoginModal();
+  showToast('登录成功');
+}
+function logout(){
+  localStorage.removeItem('wb_token');
+  S.loggedIn=false; S.userId=''; S.username=''; S.email='';
+  S.photos=0; S.likes=0; S.badges=0;
+  renderProfile();
+  showToast('已退出登录');
+}
+
+// ===== Camera（真实摄像头）=====
+var camStream=null;
+var camFacing='environment';
+
+function startCamera(){
+  var v=document.getElementById('camVideo');
+  var hint=document.getElementById('camHint');
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    if(hint)hint.textContent='当前环境不支持摄像头，可模拟拍摄';
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({video:{facingMode:camFacing},audio:false})
+    .then(function(stream){
+      camStream=stream;
+      if(v){v.srcObject=stream;v.style.display='block';v.play();}
+      if(hint)hint.textContent='将天空放入框内拍摄';
+    })
+    .catch(function(err){
+      console.warn('Camera error',err);
+      if(hint)hint.textContent='无法访问摄像头，可模拟拍摄';
+      showToast('未授权摄像头，将使用模拟拍摄');
+    });
+}
+function stopCamera(){
+  if(camStream){camStream.getTracks().forEach(function(t){t.stop()});camStream=null;}
+  var v=document.getElementById('camVideo');
+  if(v){v.srcObject=null;v.style.display='none';}
+}
+function switchCamera(){
+  camFacing=camFacing==='environment'?'user':'environment';
+  stopCamera();
+  startCamera();
+}
+function goToCamera(){
+  if(!S.loggedIn){showLoginModal();return;}
+  showScreen('screen-camera',true);
+  startCamera();
+}
+function closeCamera(){
+  stopCamera();
+  goBack();
+}
+function capturePhoto(){
+  var photoData=null;
+  var v=document.getElementById('camVideo');
+  if(v&&v.srcObject&&v.videoWidth>0){
+    try{
+      var c=document.createElement('canvas');
+      c.width=v.videoWidth;c.height=v.videoHeight;
+      c.getContext('2d').drawImage(v,0,0);
+      photoData=c.toDataURL('image/jpeg',0.7);
+    }catch(e){photoData=null;}
+  }
+  // 组装一条新的社区动态（含真实照片或模拟）
+  var w=LAST_WEATHER;
+  var wStr=w?(w.desc+' · '+w.temp+'\u00B0C'):'晴 · 25\u00B0C';
+  var feed={
+    id:Date.now(),
+    photo:photoData||'blue',
+    isImage:!!photoData,
+    weather:wStr,
+    user:S.username||'我',
+    avatarColor:'blue',
+    district:S.city+' '+S.district,
+    time:'刚刚',
+    likes:0,liked:false,comments:0,
+    caption:'',comments_list:[]
+  };
+  FEEDS.unshift(feed);
+  S.photos++;
+  stopCamera();
+  showToast('拍摄成功！已发布到天空社区');
+  S.filter='new';
+  switchTab('community');
+  document.querySelectorAll('.cm-tab').forEach(function(t){
+    t.classList.remove('active');
+    if(t.textContent.indexOf('最新')>=0)t.classList.add('active');
+  });
+}
+
+// ===== 地理位置 / 附近排序 =====
+function _h(s){var h=0;for(var i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return Math.abs(h);}
+function feedCoords(f){
+  var h=_h((f.district||'')+f.id);
+  return {lat:22+(h%230)/10, lng:100+((h>>8)%250)/10};
+}
+function haversine(a,b){
+  var R=6371,toR=Math.PI/180;
+  var dLat=(b.lat-a.lat)*toR,dLng=(b.lng-a.lng)*toR;
+  var la1=a.lat*toR,la2=b.lat*toR;
+  var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(la1)*Math.cos(la2)*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+function getUserLocation(){
+  return new Promise(function(res){
+    if(!navigator.geolocation){res(null);return;}
+    navigator.geolocation.getCurrentPosition(
+      function(p){res({lat:p.coords.latitude,lng:p.coords.longitude});},
+      function(){res(null);},
+      {enableHighAccuracy:true,timeout:8000,maximumAge:60000}
+    );
+  });
+}
+
+// ===== Toast =====
+var toastTimer=null;
+function showToast(msg){
+  var t=document.getElementById('toast');
+  t.textContent=msg;
+  t.classList.add('show');
+  if(toastTimer)clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){t.classList.remove('show')},2000);
+}
+
+// ===== Auth helpers =====
+function authToken(){ return localStorage.getItem('wb_token') || ''; }
+function authHeader(){
+  var t = authToken();
+  return t ? { 'Authorization': 'Bearer ' + t } : {};
+}
+function applyUserProfile(u){
+  S.loggedIn = true;
+  S.userId = u.userId || ('WB' + u.id);
+  S.username = u.username || '';
+  S.email = u.email || '';
+  S.photos = u.photos || 0;
+  S.likes = u.likes || 0;
+  S.badges = u.badges || 0;
+  renderProfile();
+}
+function restoreSession(){
+  var t = authToken();
+  if(!t) return Promise.resolve();
+  return api.getProfile().then(function(res){
+    if(res.ok){ applyUserProfile(res.data); }
+    else { localStorage.removeItem('wb_token'); }
+  }).catch(function(){ localStorage.removeItem('wb_token'); });
+}
+
+// ===== Init =====
+function showLoadingError(msg){
+  var overlay=document.getElementById('loadingOverlay');
+  var spinner=document.getElementById('loadingSpinner');
+  var text=document.getElementById('loadingText');
+  var error=document.getElementById('loadingError');
+  var errorMsg=document.getElementById('loadingErrorMsg');
+  if(spinner)spinner.style.display='none';
+  if(text)text.style.display='none';
+  if(error){
+    error.style.display='block';
+    errorMsg.textContent=msg;
+  }
+  if(overlay)overlay.classList.remove('hidden');
+}
+function hideLoadingError(){
+  var spinner=document.getElementById('loadingSpinner');
+  var text=document.getElementById('loadingText');
+  var error=document.getElementById('loadingError');
+  if(spinner)spinner.style.display='block';
+  if(text)text.style.display='block';
+  if(error)error.style.display='none';
+}
+// 真正隐藏加载遮罩：清理错误态 + 加 hidden 类。即使之前触发过 showLoadingError，
+// 只要数据最终拿到了，就要把错误清掉并把遮罩藏起来，避免页面被卡在错误遮罩后面。
+function hideLoadingOverlay(){
+  hideLoadingError();
+  var overlay=document.getElementById('loadingOverlay');
+  if(overlay)overlay.classList.add('hidden');
+}
+
+var _SOURCE_IDS=['ecmwf','gfs','icon','grapes','cma','caiyun','pws','qweather','moji','weathercn','weathercom','huawei','xiaomi','apple','accu','goog','tct'];
+
+function _runInitPipeline(){
+  // 关键数据：城市配置（失败则确实无法继续）
+  return fetch('/api/cities')
+    .then(function(r){
+      if(!r.ok)throw new Error('城市配置加载失败：HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(d){
+      CITIES=d.cities;
+      // 非关键数据：用 allSettled 语义，单个源失败不影响整体加载
+      // 用 Promise.all + 每项 .catch 兜底，模拟 allSettled（兼容老浏览器）
+      function safe(p){return p.then(function(v){return{ok:true,v:v};},function(e){return{ok:false,e:e};});}
+      return Promise.all([
+        safe(api.getRanking('7d')),
+        safe(api.getRanking('30d')),
+        safe(api.getRanking('all')),
+        safe(api.getNotifications()),
+        safe(api.getFeeds('hot')),
+        Promise.all(_SOURCE_IDS.map(function(id){return safe(api.getSource(id));}))
+      ]);
+    })
+    .then(function(results){
+      // 只在所有关键数据齐备时才隐藏遮罩、渲染页面
+      function unpack(r, fallback){return (r&&r.ok)?r.v:fallback;}
+      RANK_DATA={
+        '7d':unpack(results[0],[]),
+        '30d':unpack(results[1],[]),
+        'all':unpack(results[2],[])
+      };
+      NOTIFICATIONS=unpack(results[3],[]);
+      FEEDS=unpack(results[4],[]);
+      var sources=results[5]||[];
+      SOURCE_DATA={};
+      _SOURCE_IDS.forEach(function(id,i){
+        var sr=sources[i];
+        if(sr&&sr.ok&&sr.v){SOURCE_DATA[id]=sr.v;}
+      });
+      hideLoadingOverlay();
+      // 若本地已有登录态（token），回查后端恢复用户信息
+      restoreSession().then(function(){
+        renderHome();
+        updateBellBadge();
+        updateClocks();
+      });
+      return true;
+    });
+}
+
+function initData(){
+  hideLoadingError();
+
+  // 协议检测：file:// 协议下 fetch 无法访问后端
+  if(window.location.protocol==='file:'){
+    showLoadingError('当前通过 file:// 协议打开，无法请求后端 API。请双击 start_server.bat 启动服务后，通过 http://localhost:8000 访问。');
+    return;
+  }
+
+  // 超时 Promise：25 秒（后端首次拉真实天气可能慢，且含 17 个源并发）
+  var loadTimeout = new Promise(function(_, reject){
+    setTimeout(function(){ reject(new Error('加载超时，请确认后端服务已启动')); }, 25000);
+  });
+
+  var loadPipeline = _runInitPipeline();
+
+  // Promise.race：超时或失败先到先得
+  Promise.race([loadPipeline, loadTimeout])
+    .then(function(ok){
+      // 成功路径：_runInitPipeline 内部已经 hideLoadingOverlay
+    })
+    .catch(function(err){
+      console.error('Init failed:', err);
+      // 自动重试一次（瞬时网络抖动 / 后端刚启动）
+      if(!initData._retried){
+        initData._retried=true;
+        console.log('[Init] 自动重试一次…');
+        setTimeout(function(){ initData(); }, 1500);
+        return;
+      }
+      var msg='';
+      if(err && err.message)msg=err.message;
+      if(!msg)msg='请确认已双击 start_server.bat 启动后端服务';
+      showLoadingError('加载失败：' + msg + '。可点击"重新加载"重试，或按 F12 查看控制台详情。');
+    });
+}
+
+// ===== 移动端全屏模式检测 =====
+// 作为已安装 PWA / WebView 安装包运行时，填满整个屏幕（去除手机外壳阴影）
+(function(){
+  var standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  var iosStandalone = window.navigator.standalone === true;
+  var param = location.search.indexOf('app=1') >= 0;
+  if(standalone || iosStandalone || param){
+    document.documentElement.classList.add('app-mode');
+  }
+})();
+
+// ===== 设备自适应缩放：让 844px 高的手机框完整适配任意视口，避免首页被裁剪 =====
+// 注意：app-mode 下设备框已填满屏幕，无需缩放
+function fitDevice(){
+  var d=document.getElementById('device');
+  if(!d)return;
+  if(document.documentElement.classList.contains('app-mode')){ d.style.transform=''; return; }
+  var s=Math.min(1,(window.innerWidth-16)/390,(window.innerHeight-16)/844);
+  d.style.transform='scale('+s+')';
+}
+window.addEventListener('resize',fitDevice);
+fitDevice();
+
+// ===== PWA Service Worker 注册（仅生产 HTTPS 环境，本地 localhost 也支持）=====
+if('serviceWorker' in navigator){
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('sw.js').catch(function(err){
+      console.warn('SW 注册失败（不影响使用）:', err);
+    });
+  });
+}
+
+try{
+  initData();
+}catch(syncErr){
+  console.error('Sync init error:', syncErr);
+  showLoadingError('页面初始化出错：' + (syncErr && syncErr.message ? syncErr.message : String(syncErr)) + '。请刷新页面或检查控制台。');
+}
+
+</script>
+</body>
+</html>

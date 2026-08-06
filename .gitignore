@@ -1,0 +1,44 @@
+# ===== Secrets (never commit) =====
+deliverables/backend/config.json
+deliverables/backend/config.*.json
+
+# ===== Python / local env =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+.workbuddy/
+/workbuddy/
+
+# ===== Logs / temp =====
+*.log
+*.err
+_srv.log
+_srv.err.log
+deliverables/backend/......_srv.log
+
+# ===== Build artifacts =====
+dist/
+build/
+*.apk
+*.ipa
+node_modules/
+
+# ===== Editor / OS =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ===== Optional extras (not required for deploy) =====
+deliverables/html-prototype/test_data.js
+deliverables/html-prototype/_gen_districts.py
+deliverables/html-prototype/_gen_icons.py
+deliverables/backend/_test_weather.py
+overview*.md
+deliverables/*.md
+deliverables/backend/*.md
