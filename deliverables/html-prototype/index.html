@@ -2,13 +2,15 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<!-- 移动端 viewport：禁用缩放，全屏适配 -->
+<meta name="viewport" content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="theme-color" content="#3B82F6">
 <meta name="description" content="聚合多源天气数据，对比各家预报准确率">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="聚合天气">
 <link rel="manifest" href="manifest.webmanifest">
@@ -2286,6 +2288,38 @@ function initData(){
     document.documentElement.classList.add('app-mode');
   }
 })();
+
+// ===== 禁用双指缩放、手势缩放、双击放大（让 APP 行为像原生 APP）=====
+// 阻止多指手势缩放
+document.addEventListener('gesturestart', function(e){ e.preventDefault(); }, {passive:false});
+document.addEventListener('gesturechange', function(e){ e.preventDefault(); }, {passive:false});
+document.addEventListener('gestureend', function(e){ e.preventDefault(); }, {passive:false});
+// 阻止双指触摸缩放（Android Chrome WebView 仍可能触发）
+document.addEventListener('touchmove', function(e){
+  if(e.touches && e.touches.length > 1){ e.preventDefault(); }
+}, {passive:false});
+// 阻止双击放大
+var _lastTouchEnd = 0;
+document.addEventListener('touchend', function(e){
+  var now = Date.now();
+  if(now - _lastTouchEnd <= 300){ e.preventDefault(); }
+  _lastTouchEnd = now;
+}, {passive:false});
+// 阻止滚轮缩放（Ctrl+滚轮）
+document.addEventListener('wheel', function(e){
+  if(e.ctrlKey){ e.preventDefault(); }
+}, {passive:false});
+// 阻止键盘缩放快捷键（Ctrl+加减号）
+document.addEventListener('keydown', function(e){
+  if(e.ctrlKey && (e.key === '+' || e.key === '-' || e.key === '=' || e.key === '0')){
+    e.preventDefault();
+  }
+}, {passive:false});
+
+// ===== 锁定竖屏方向（如果 API 支持）=====
+if(screen.orientation && screen.orientation.lock){
+  screen.orientation.lock('portrait').catch(function(){ /* 部分浏览器仅在 PWA 全屏下支持，忽略失败 */ });
+}
 
 // ===== 设备自适应缩放：让 844px 高的手机框完整适配任意视口，避免首页被裁剪 =====
 // 注意：app-mode 下设备框已填满屏幕，无需缩放
