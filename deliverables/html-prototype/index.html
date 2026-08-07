@@ -1101,17 +1101,23 @@ function updateWeatherDisplay(w){
   else if(aqi<=300){badge.textContent='重度污染';badge.style.background='#7F1D1D';}
   else{badge.textContent='严重污染';badge.style.background='#4C1D1D';badge.style.color='#FECACA';}
 
-  // Hourly — 用经数据源偏移后的逐小时数据（wv.hourly）；无则用当前温度估算
+    // Hourly — 用经数据源偏移后的逐小时数据（wv.hourly）；无则用当前温度估算
+  // 第一个小时（"现在"）使用当前观测数据，后续小时使用 hourly 预报
   var hr='';
+  var HOURLY_COUNT=24;
+  // 第一个项：使用当前观测数据
+  hr+='<div class="hourly-item"><span class="hourly-time">现在</span>'+wIcon(wv.cond,28)+'<span class="hourly-temp">'+wv.temp+'°</span></div>';
   if(wv.hourly&&wv.hourly.length){
-    wv.hourly.slice(0,8).forEach(function(h,i){
-      hr+='<div class="hourly-item"><span class="hourly-time">'+(i===0?'现在':h.time)+'</span>'+wIcon(h.cond,28)+'<span class="hourly-temp">'+h.temp+'°</span></div>';
+    // 后续项：使用 hourly 预报（跳过第0项，因为它是下一个整点，不是现在）
+    wv.hourly.slice(0,HOURLY_COUNT-1).forEach(function(h,i){
+      hr+='<div class="hourly-item"><span class="hourly-time">'+h.time+'</span>'+wIcon(h.cond,28)+'<span class="hourly-temp">'+h.temp+'°</span></div>';
     });
   }else{
-    for(var i=0;i<8;i++){
+    // 备用数据：从下一个小时开始
+    for(var i=1;i<HOURLY_COUNT;i++){
       var hh=(now.getHours()+i)%24;
       var t=wv.temp+(i%3-1);
-      hr+='<div class="hourly-item"><span class="hourly-time">'+(i===0?'现在':hh+':00')+'</span>'+wIcon(i%4===0?'cloudy':wv.cond,28)+'<span class="hourly-temp">'+t+'°</span></div>';
+      hr+='<div class="hourly-item"><span class="hourly-time">'+hh+':00'</span>'+wIcon(i%4===0?'cloudy':wv.cond,28)+'<span class="hourly-temp">'+t+'°</span></div>';
     }
   }
   document.getElementById('hourlyRow').innerHTML=hr;
@@ -1898,7 +1904,10 @@ function initData(){
   var standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
   var iosStandalone = window.navigator.standalone === true;
   var param = location.search.indexOf('app=1') >= 0;
-  if(standalone || iosStandalone || param){
+  var webview = /WebView|wv/i.test(navigator.userAgent) || /Android.*WebView/i.test(navigator.userAgent);
+  // 对于移动端（手机/平板）视口，默认使用 app-mode 以获得最佳体验
+  var isMobileViewport = window.innerWidth <= 500;
+  if(standalone || iosStandalone || param || webview || isMobileViewport){
     document.documentElement.classList.add('app-mode');
   }
 })();
