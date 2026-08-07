@@ -1,27 +1,24 @@
 # Render 部署蓝图
 # 详见：https://render.com/docs/blueprint-spec
 # 使用方式：在 Render 控制台 New → Blueprint，选择关联的 GitHub 仓库即可自动应用。
+# 注意：本文件位于 deliverables/render.yaml，因此在 Blueprint 创建页的
+#       "Blueprint Path" 字段需填 deliverables/render.yaml（不要留空或填 render.yaml）
 services:
   - type: web
     name: aggregate-weather
     runtime: docker
-    plan: free                 # 免费套餐：750 小时/月，闲置 15 分钟后自动休眠
-    # 若仓库根目录就是 deliverables 内容，下面两项可省略；
-    # 若仓库根是 555/，则设置 rootDir 为 ./deliverables
-    dockerfilePath: ./Dockerfile
+    plan: free
+    rootDir: ./deliverables
+    dockerfilePath: Dockerfile
     dockerContext: .
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
-      # JWT 密钥：自动生成随机值
       - key: JWT_SECRET
         generateValue: true
-      # LLM API Key（如需 AI 解读功能，在 Render 控制台手动填入；不填则该功能降级）
       - key: LLM_API_KEY
         sync: false
       - key: LLM_BASE_URL
         value: https://api.siliconflow.cn/v1
       - key: LLM_MODEL
         value: Qwen/Qwen2.5-7B-Instruct
-      # 免费套餐不配 MySQL，后端会自动降级为内存存储（重启后清空，原型阶段够用）
-      # 如需持久化用户数据，可加 Render 免费 PostgreSQL + 修改后端，此处保持空即可
