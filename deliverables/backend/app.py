@@ -281,12 +281,17 @@ NOTIFICATIONS = [
     {"type": "reminder", "title": "日出时间提醒", "text": "明日日出时间 05:32，天气晴好，适合观日出。", "timeOffset": -86400000, "read": False},
     {"type": "alert", "title": "大风蓝色预警", "text": "预计今日下午有4-5级偏北风，阵风可达7级。", "timeOffset": -172800000, "read": True},
     {"type": "report", "title": "月度数据源评估", "text": "近30天综合排名：彩云短临86.8%居首，ECMWF 85.2%次之。", "timeOffset": -259200000, "read": True},
+    # —— 社交类通知：获赞 / 获评论 ——
+    {"type": "like", "title": "紫色黄昏 赞了你的照片", "text": "你发布的「今日北京蓝天白云」获得了一个赞。", "timeOffset": -1800000, "read": False, "actor": "紫色黄昏", "feedId": 1},
+    {"type": "comment", "title": "晚霞猎人 评论了你的照片", "text": "彩云短临确实好用，下次一起拍！", "timeOffset": -5400000, "read": False, "actor": "晚霞猎人", "feedId": 5},
+    {"type": "like", "title": "云朵收藏家 赞了你的照片", "text": "你发布的「丰台今天空气质量优」获得了一个赞。", "timeOffset": -10800000, "read": True, "actor": "云朵收藏家", "feedId": 4},
+    {"type": "comment", "title": "气象迷 评论了你的照片", "text": "能见度确实好，PM2.5应该很低", "timeOffset": -14400000, "read": True, "actor": "气象迷", "feedId": 1},
 ]
 
 FEEDS = [
     {
         "id": 1, "photo": "blue", "weather": "晴 · 28°C",
-        "user": "天空观察者", "avatarColor": "blue", "district": "朝阳区", "time": "2小时前",
+        "user": "天空观察者", "owner": "天空观察者", "avatarColor": "blue", "district": "朝阳区", "time": "2小时前",
         "likes": 128, "liked": False, "comments": 12,
         "caption": "今日北京蓝天白云，能见度极佳！ECMWF预报准确率今天拉满了。",
         "comments_list": [
@@ -296,7 +301,7 @@ FEEDS = [
     },
     {
         "id": 2, "photo": "orange", "weather": "多云 · 22°C",
-        "user": "云朵收藏家", "avatarColor": "orange", "district": "海淀区", "time": "4小时前",
+        "user": "云朵收藏家", "owner": "云朵收藏家", "avatarColor": "orange", "district": "海淀区", "time": "4小时前",
         "likes": 95, "liked": False, "comments": 8,
         "caption": "海淀区下午的火烧云，GFS预报的云量跟实况很接近。",
         "comments_list": [
@@ -305,7 +310,7 @@ FEEDS = [
     },
     {
         "id": 3, "photo": "gray", "weather": "阴 · 18°C",
-        "user": "阴天爱好者", "avatarColor": "gray", "district": "通州区", "time": "6小时前",
+        "user": "阴天爱好者", "owner": "阴天爱好者", "avatarColor": "gray", "district": "通州区", "time": "6小时前",
         "likes": 67, "liked": False, "comments": 5,
         "caption": "通州今天全天阴天，CMA-MESO预报准确。",
         "comments_list": [
@@ -314,7 +319,7 @@ FEEDS = [
     },
     {
         "id": 4, "photo": "green", "weather": "晴 · 25°C",
-        "user": "绿色天空", "avatarColor": "green", "district": "丰台区", "time": "8小时前",
+        "user": "绿色天空", "owner": "绿色天空", "avatarColor": "green", "district": "丰台区", "time": "8小时前",
         "likes": 152, "liked": False, "comments": 15,
         "caption": "丰台今天空气质量优！能见度超20公里。",
         "comments_list": [
@@ -324,7 +329,7 @@ FEEDS = [
     },
     {
         "id": 5, "photo": "purple", "weather": "多云 · 20°C",
-        "user": "紫色黄昏", "avatarColor": "purple", "district": "昌平区", "time": "12小时前",
+        "user": "紫色黄昏", "owner": "紫色黄昏", "avatarColor": "purple", "district": "昌平区", "time": "12小时前",
         "likes": 203, "liked": False, "comments": 20,
         "caption": "昨晚昌平的晚霞太绝了！彩云短临的分钟级预报帮我掐准了时间。",
         "comments_list": [
@@ -333,13 +338,6 @@ FEEDS = [
         ],
     },
 ]
-
-USER_PROFILE = {
-    "userIdPrefix": "WB",
-    "photos": 3,
-    "likes": 56,
-    "badges": 4,
-}
 
 
 # =====================================================================
@@ -488,7 +486,6 @@ class UserStore:
             "password_hash": pw_hash,
             "photos": 0,
             "likes": 0,
-            "badges": 0,
         }
         self._mem[self._seq] = user
         return self._public(user)
@@ -532,7 +529,6 @@ class UserStore:
             "email": row["email"],
             "photos": row.get("photos", 0),
             "likes": row.get("likes", 0),
-            "badges": row.get("badges", 0),
         }
 
 
@@ -933,7 +929,18 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
     h_times = w_data.get("hourly", {}).get("time", [])
     h_temps = w_data.get("hourly", {}).get("temperature_2m", [])
     h_codes = w_data.get("hourly", {}).get("weather_code", [])
-    now_hour = datetime.now().strftime("%Y-%m-%dT%H:00")
+    # 使用 Open-Meteo 返回的 current.time 作为基准（带时区），避免服务器时区与请求时区不一致
+    # 例如 Render 服务器为 UTC，但请求时区为 Asia/Shanghai，用 datetime.now() 会偏移 8 小时
+    cur_time_str = cur.get("time", "")
+    if cur_time_str:
+        # current.time 格式如 "2026-08-07T15:30"，对齐到整点用于匹配 hourly
+        now_hour = cur_time_str[:13] + ":00"  # "2026-08-07T15:00"
+    else:
+        # 回退：用 utc_offset_seconds 计算请求时区的当前时间
+        utc_offset = w_data.get("utc_offset_seconds", 0)
+        now_utc = datetime.now(timezone.utc)
+        local_now = now_utc + timedelta(seconds=utc_offset)
+        now_hour = local_now.strftime("%Y-%m-%dT%H:00")
     start_idx = 0
     for i, t in enumerate(h_times):
         if t >= now_hour:
@@ -1037,17 +1044,26 @@ def get_source(source_id: str):
 
 @app.get("/api/notifications", tags=["通知"], summary="获取通知列表")
 def get_notifications():
-    """返回用户的通知列表，time 字段为动态计算的时间戳"""
-    return [
-        {
+    """返回用户的通知列表，time 字段为动态计算的时间戳。
+    通知类型：alert（预警）/ report（报告）/ reminder（提醒）/ like（获赞）/ comment（获评论）。
+    like 与 comment 类型额外携带 actor（操作者）与 feedId（关联动态 ID）字段，
+    便于前端在通知页展示社交动作并提供"回复"按钮。
+    """
+    result = []
+    for n in NOTIFICATIONS:
+        item = {
             "type": n["type"],
             "title": n["title"],
             "text": n["text"],
             "time": _now_ms() + n["timeOffset"],
             "read": n["read"],
         }
-        for n in NOTIFICATIONS
-    ]
+        if "actor" in n:
+            item["actor"] = n["actor"]
+        if "feedId" in n:
+            item["feedId"] = n["feedId"]
+        result.append(item)
+    return result
 
 
 @app.put("/api/notifications/read-all", tags=["通知"], summary="全部标记已读")
@@ -1183,7 +1199,7 @@ def login(req: LoginRequest):
 
 @app.get("/api/user/profile", tags=["用户"], summary="获取用户资料")
 def get_user_profile(authorization: str = Header(None)):
-    """返回当前登录用户的基本资料（实拍数、获赞数、徽章数），需携带 Bearer Token"""
+    """返回当前登录用户的基本资料（实拍数、获赞数等），需携带 Bearer Token"""
     user = _require_user(authorization)
     if not user:
         return JSONResponse(status_code=401, content={"error": "未登录或登录已过期"})
@@ -1227,17 +1243,38 @@ def reverse_geocode(lat: float, lon: float):
             {"latitude": lat, "longitude": lon, "localityLanguage": "zh"},
             attempts=2, timeout=8.0,
         )
-        city_name = (data.get("city") or data.get("locality") or "").strip()
+        city_name = (data.get("city") or data.get("locality") or data.get("principalSubdivision") or "").strip()
         # localityInfo.Administratives 是从细到粗的行政区划列表，取最细一级作为区县
         li = data.get("localityInfo")
         if isinstance(li, dict):
             admins = li.get("Administratives") or []
             if admins and isinstance(admins, list):
-                district_name = (admins[0].get("name") or "").strip()
+                # 倒序查找：从最细到最粗，取第一个非空作为区县
+                for admin in reversed(admins):
+                    name = (admin.get("name") or "").strip() if isinstance(admin, dict) else ""
+                    if name:
+                        district_name = name
+                        break
         if not district_name:
             district_name = (data.get("principalSubdivision") or "").strip()
     except Exception:
         pass
+
+    # 1.5) 备用：Open-Meteo reverse geocoding（同一个数据源，更可靠）
+    if not city_name:
+        try:
+            data = _http_get_with_retry(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                {"latitude": lat, "longitude": lon, "count": 1, "language": "zh", "format": "json"},
+                attempts=2, timeout=8.0,
+            )
+            results = data.get("results") or []
+            if results:
+                r0 = results[0]
+                city_name = (r0.get("name") or "").strip()
+                district_name = (r0.get("admin3") or r0.get("admin2") or "").strip()
+        except Exception:
+            pass
 
     # 2) 用本地城市表做最近匹配（Haversine），保证返回的一定是 data.json 里的城市
     data_path = os.path.join(_frontend_dir, "data.json")
@@ -1251,34 +1288,72 @@ def reverse_geocode(lat: float, lon: float):
     best_city = city_name
     best_district = ""
     if cities_list:
-        # 预先用 BigDataCloud 结果匹配城市名
+        # 城市名归一化：去掉"市/省/自治区"等后缀以提高匹配率
+        def _norm(name):
+            if not name:
+                return ""
+            for suf in ("市", "省", "自治区", "特别行政区", "县", "区"):
+                if name.endswith(suf) and len(name) > len(suf):
+                    return name[:-len(suf)]
+            return name
+        city_norm = _norm(city_name)
+        # 预先用 BigDataCloud 结果匹配城市名（处理"北京市"→"北京"等简称）
         matched = None
         for c in cities_list:
-            if c["name"] == city_name:
+            if c["name"] == city_name or c["name"] == city_norm:
                 matched = c
                 break
-        # 匹配不到则按坐标找最近城市
-        if not matched:
-            best_d = 1e9
+        # 匹配不到则按字符串包含
+        if not matched and city_name:
             for c in cities_list:
-                # 用城市名做正向地理编码太慢，这里用粗略匹配：BigDataCloud 的 cityName
-                if city_name and c["name"] in city_name:
+                if city_name.startswith(c["name"]) or c["name"] in city_name or city_norm.startswith(c["name"]):
                     matched = c
                     break
-            if not matched and city_name:
-                # 退化：直接按名字包含
-                for c in cities_list:
-                    if city_name.startswith(c["name"]) or c["name"] in city_name:
-                        matched = c
+        # 仍匹配不到，用 Open-Meteo geocoding 反查城市名
+        if not matched:
+            try:
+                geo_data = _http_get_with_retry(
+                    "https://geocoding-api.open-meteo.com/v1/search",
+                    {"latitude": lat, "longitude": lon, "count": 5, "language": "zh", "format": "json"},
+                    attempts=1, timeout=6.0,
+                )
+                geo_results = geo_data.get("results") or []
+                for gr in geo_results:
+                    gname = _norm((gr.get("name") or "").strip())
+                    for c in cities_list:
+                        if c["name"] == gname or c["name"] in gname or gname.startswith(c["name"]):
+                            matched = c
+                            if not district_name:
+                                district_name = (gr.get("admin3") or gr.get("admin2") or "").strip()
+                            break
+                    if matched:
                         break
+            except Exception:
+                pass
         if matched:
             best_city = matched["name"]
             # 区县匹配
             ds = matched.get("districts", [])
             if ds:
                 # 若 BigDataCloud 给了区县名，尝试匹配
-                hit = next((d for d in ds if district_name and d in district_name), None)
+                hit = next((d for d in ds if district_name and (d in district_name or district_name in d)), None)
                 best_district = hit or ds[0]
+
+    # 3) 最终兜底：如果什么都没匹配到，用中国主要城市经纬度找最近城市
+    if not best_city:
+        fallback_cities = [
+            ("北京", 39.90, 116.40), ("上海", 31.23, 121.47), ("广州", 23.13, 113.26),
+            ("深圳", 22.54, 114.06), ("成都", 30.57, 104.07), ("杭州", 30.27, 120.15),
+            ("武汉", 30.59, 114.31), ("南京", 32.04, 118.78), ("西安", 34.27, 108.95),
+            ("重庆", 29.56, 106.55),
+        ]
+        best_d = 1e9
+        for name, clat, clon in fallback_cities:
+            d = (lat - clat) ** 2 + (lon - clon) ** 2
+            if d < best_d:
+                best_d = d
+                best_city = name
+                best_district = "全市"
 
     return {
         "city": best_city,

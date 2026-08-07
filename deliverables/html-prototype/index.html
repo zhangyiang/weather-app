@@ -43,6 +43,9 @@ html.app-mode .device{width:100vw;height:100vh;height:100dvh;border-radius:0;box
 /* 安全区适配（刘海屏/底部手势条） */
 html.app-mode .screen{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
 html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
+/* 在 APP 模式下隐藏自定义状态栏，让手机系统状态栏显示 */
+html.app-mode .status-bar{display:none}
+html.app-mode .home-hero{padding-top:20px}
 
 /* Status Bar */
 .status-bar{position:absolute;top:0;left:0;right:0;height:var(--sb-h);display:flex;align-items:flex-end;justify-content:space-between;padding:0 24px 6px;font-size:14px;font-weight:600;z-index:50;transition:color 0.3s}
@@ -299,11 +302,17 @@ html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
 .nt-icon-alert{background:#FEF3C7;color:var(--warning)}
 .nt-icon-report{background:var(--accent-light);color:var(--accent)}
 .nt-icon-reminder{background:#D1FAE5;color:var(--success)}
+.nt-icon-like{background:#FEE2E2;color:var(--danger)}
+.nt-icon-comment{background:#EDE9FE;color:#8B5CF6}
 .nt-icon svg{width:18px;height:18px}
-.nt-body{flex:1}
+.nt-body{flex:1;min-width:0}
 .nt-title{font-size:14px;font-weight:600}
 .nt-text{font-size:12px;color:var(--text-secondary);margin-top:4px;line-height:1.5}
 .nt-time{font-size:11px;color:var(--muted);margin-top:4px}
+.nt-actions{display:flex;gap:8px;margin-top:8px}
+.nt-action-btn{padding:5px 14px;border-radius:var(--r-full);font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-secondary)}
+.nt-action-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.nt-action-btn.following{background:var(--bg);color:var(--text-secondary);border-color:var(--border-dark)}
 
 /* Profile */
 .pf-header{display:block}
@@ -311,7 +320,7 @@ html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
 .pf-avatar{width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 8px;border:3px solid rgba(255,255,255,0.3)}
 .pf-name{font-size:18px;font-weight:700}
 .pf-id{font-size:12px;opacity:0.7;margin-top:2px}
-.pf-stats{display:flex;justify-content:center;gap:32px;margin-top:16px}
+.pf-stats{display:flex;justify-content:center;gap:20px;margin-top:16px}
 .pf-stat{text-align:center}
 .pf-stat-num{font-size:20px;font-weight:700}
 .pf-stat-label{font-size:11px;opacity:0.8;margin-top:2px}
@@ -350,10 +359,12 @@ html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
 
 /* Camera */
 .cam-screen{background:#000}
+/* 拍照界面下隐藏底部 tab bar，让拍照按钮完整显示 */
+.cam-screen.active ~ .tab-bar{display:none}
 .cam-view{flex:1;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);font-size:14px;position:relative}
 .cam-overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:240px;height:240px;border:2px solid rgba(255,255,255,0.4);border-radius:var(--r-lg)}
-.cam-hint{position:absolute;bottom:100px;left:0;right:0;text-align:center;font-size:13px;color:rgba(255,255,255,0.6)}
-.cam-btn-bar{padding:20px 40px 40px;display:flex;justify-content:space-around;align-items:center}
+.cam-hint{position:absolute;bottom:30px;left:0;right:0;text-align:center;font-size:13px;color:rgba(255,255,255,0.6)}
+.cam-btn-bar{padding:20px 40px calc(40px + env(safe-area-inset-bottom));display:flex;justify-content:space-around;align-items:center;position:relative;z-index:2}
 .cam-close{width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;cursor:pointer}
 .cam-close svg{width:20px;height:20px;color:#fff}
 .cam-capture{width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,0.3);cursor:pointer}
@@ -566,11 +577,11 @@ html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
 </div>
 <!-- ===== Community Screen ===== -->
 <div class="screen" id="screen-community">
-  <div class="cm-header">
-    <h2>天空社区</h2>
-    <p style="font-size:12px;color:var(--text-secondary)">实拍即校验 · 真实天气众包</p>
+  <div class="cm-header" id="cmHeader">
+    <h2 id="cmHeaderTitle">天空社区</h2>
+    <p id="cmHeaderSub" style="font-size:12px;color:var(--text-secondary)">实拍即校验 · 真实天气众包</p>
   </div>
-  <div class="cm-tabs">
+  <div class="cm-tabs" id="cmTabs">
     <div class="cm-tab active" onclick="switchFilter('hot')">热门</div>
     <div class="cm-tab" onclick="switchFilter('new')">最新</div>
     <div class="cm-tab" onclick="switchFilter('near')">附近</div>
@@ -626,13 +637,18 @@ html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
 <!-- ===== Profile Screen ===== -->
 <div class="screen" id="screen-profile">
   <div class="pf-header">
-    <div class="pf-avatar" id="pfAvatar">W</div>
+    <div class="pf-avatar" id="pfAvatar" onclick="openAvatarPicker()" style="cursor:pointer;position:relative">W
+      <div style="position:absolute;right:-2px;bottom:-2px;width:22px;height:22px;border-radius:50%;background:var(--accent);border:2px solid #fff;display:flex;align-items:center;justify-content:center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" style="width:12px;height:12px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      </div>
+    </div>
     <div class="pf-name" id="pfName">微信用户</div>
     <div class="pf-id" id="pfId">未登录</div>
     <div class="pf-stats">
       <div class="pf-stat"><div class="pf-stat-num" id="pfStatPhotos">0</div><div class="pf-stat-label">实拍</div></div>
       <div class="pf-stat"><div class="pf-stat-num" id="pfStatLikes">0</div><div class="pf-stat-label">获赞</div></div>
-      <div class="pf-stat"><div class="pf-stat-num" id="pfStatBadges">0</div><div class="pf-stat-label">徽章</div></div>
+      <div class="pf-stat" onclick="openFollowList('followers')" style="cursor:pointer"><div class="pf-stat-num" id="pfStatFollowers">0</div><div class="pf-stat-label">粉丝</div></div>
+      <div class="pf-stat" onclick="openFollowList('following')" style="cursor:pointer"><div class="pf-stat-num" id="pfStatFollowing">0</div><div class="pf-stat-label">关注</div></div>
     </div>
   </div>
   <div class="pf-body">
@@ -643,48 +659,14 @@ html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
         <span class="pf-row-label">拍天空</span>
         <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
       </div>
-      <div class="pf-row" onclick="switchTab('community')">
+      <div class="pf-row" onclick="openMyAlbum()">
         <div class="pf-row-icon" style="background:#FEF3C7"><svg viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
         <span class="pf-row-label">我的相册</span>
         <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
       </div>
     </div>
     <div class="pf-section">
-      <div class="pf-section-title">天气偏好</div>
-      <div class="pf-row" onclick="showToast('偏好设置已保存')">
-        <div class="pf-row-icon" style="background:var(--accent-light)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
-        <span class="pf-row-label">关注的城市</span>
-        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-      </div>
-      <div class="pf-row" onclick="showToast('通知设置已保存')">
-        <div class="pf-row-icon" style="background:#D1FAE5"><svg viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
-        <span class="pf-row-label">预警通知设置</span>
-        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-      </div>
-      <div class="pf-row" onclick="showToast('已切换为温度单位 °C')">
-        <div class="pf-row-icon" style="background:#FEF3C7"><svg viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg></div>
-        <span class="pf-row-label">温度单位</span>
-        <span style="font-size:13px;color:var(--text-secondary)">&#176;C</span>
-        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-      </div>
-    </div>
-    <div class="pf-section">
       <div class="pf-section-title">关于</div>
-      <div class="pf-row" onclick="showToast('聚合天气 v1.0.0')">
-        <div class="pf-row-icon" style="background:var(--accent-light)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div>
-        <span class="pf-row-label">关于聚合天气</span>
-        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-      </div>
-      <div class="pf-row" onclick="showToast('已清除缓存')">
-        <div class="pf-row-icon" style="background:#FEE2E2"><svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
-        <span class="pf-row-label">清除缓存</span>
-        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-      </div>
-      <div class="pf-row" onclick="showToast('感谢使用聚合天气！')">
-        <div class="pf-row-icon" style="background:#D1FAE5"><svg viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 5-3.5 7.5-9 9-5.5-1.5-9-4-9-9V5l9-3 9 3v7z"/></svg></div>
-        <span class="pf-row-label">反馈与建议</span>
-        <svg class="pf-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-      </div>
       <div class="pf-row" id="logoutRow" onclick="logout()" style="display:none;justify-content:center;color:var(--danger)">
         <span class="pf-row-label" style="color:var(--danger)">退出登录</span>
       </div>
@@ -726,6 +708,29 @@ html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
     </div>
   </div>
 </div>
+
+<!-- ===== Follow List Modal (粉丝 / 关注列表) ===== -->
+<div class="cm-modal-overlay" id="followListModal" style="align-items:flex-start;overflow-y:auto;padding-top:80px">
+  <div class="cm-modal-box" style="max-height:70%;overflow-y:auto">
+    <div class="cm-modal-title" id="followListTitle">粉丝</div>
+    <div id="followListContent" style="margin-top:8px"></div>
+    <div class="cm-modal-actions">
+      <button class="cm-modal-btn cm-modal-cancel" onclick="hideFollowListModal()" style="flex:1">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Avatar Picker Modal (头像更换) ===== -->
+<div class="cm-modal-overlay" id="avatarPickerModal" style="align-items:flex-end">
+  <div class="cm-modal-box" style="width:100%;border-radius:var(--r-xl) var(--r-xl) 0 0;padding:16px 16px 24px">
+    <div class="cm-modal-title" style="margin-bottom:14px">更换头像</div>
+    <button class="cm-modal-btn" style="background:var(--accent);color:#fff;margin-bottom:8px" onclick="avatarTakePhoto()">拍照</button>
+    <button class="cm-modal-btn" style="background:var(--bg);color:var(--text-primary);margin-bottom:8px" onclick="avatarPickFromAlbum()">从相册选择</button>
+    <button class="cm-modal-btn" style="background:var(--bg);color:var(--text-secondary)" onclick="hideAvatarPickerModal()">取消</button>
+  </div>
+</div>
+<!-- 头像相册选择用的隐藏 input -->
+<input type="file" accept="image/*" id="avatarFileInput" style="display:none" onchange="onAvatarFileSelected(this)">
 
 <!-- ===== Camera Screen ===== -->
 <div class="screen cam-screen" id="screen-camera">
@@ -940,7 +945,7 @@ function applySourceVariant(w, src){
   }
   return Object.assign({}, w, v);
 }
-let S={city:'北京',district:'朝阳区',range:'7d',filter:'hot',sourceId:null,feedId:null,loggedIn:false,userId:'',username:'',email:'',photos:0,likes:0,badges:0,userLoc:null};
+let S={city:'北京',district:'朝阳区',range:'7d',filter:'hot',sourceId:null,feedId:null,loggedIn:false,userId:'',username:'',email:'',photos:0,likes:0,userLoc:null,albumFilter:false,avatarCaptureMode:false};
 var LAST_WEATHER=null;
 let screenHistory=[];
 
@@ -968,6 +973,8 @@ function switchTab(tab){
   if(tab==='profile' && !S.loggedIn){ showLoginModal(); return; }
   var map={home:'screen-home',leaderboard:'screen-leaderboard',community:'screen-community',profile:'screen-profile'};
   var id=map[tab]||'screen-home';
+  // 通过底部 tab 进入社区时，恢复为完整社区视图（非相册模式）
+  if(tab==='community')S.albumFilter=false;
   showScreen(id);
   screenHistory=[id];
   updateTabBars(tab);
@@ -1117,7 +1124,7 @@ function updateWeatherDisplay(w){
     for(var i=1;i<HOURLY_COUNT;i++){
       var hh=(now.getHours()+i)%24;
       var t=wv.temp+(i%3-1);
-      hr+='<div class="hourly-item"><span class="hourly-time">'+hh+':00'</span>'+wIcon(i%4===0?'cloudy':wv.cond,28)+'<span class="hourly-temp">'+t+'°</span></div>';
+      hr+='<div class="hourly-item"><span class="hourly-time">'+hh+':00</span>'+wIcon(i%4===0?'cloudy':wv.cond,28)+'<span class="hourly-temp">'+t+'°</span></div>';
     }
   }
   document.getElementById('hourlyRow').innerHTML=hr;
@@ -1369,19 +1376,56 @@ function locateMe(){
 // ===== Community =====
 function renderCommunity(){
   var feeds=FEEDS.slice();
+  // 相册模式：只显示当前用户自己拍的照片（按 owner 字段过滤，兼容旧数据按 user 判断）
+  if(S.albumFilter){
+    var me=S.username||'';
+    feeds=feeds.filter(function(f){
+      var owner=f.owner||f.user||'';
+      return owner===me;
+    });
+  }
   if(S.filter==='new'){feeds.sort(function(a,b){return b.id-a.id});}
   else if(S.filter==='near'){
     if(S.userLoc){feeds.sort(function(a,b){return haversine(S.userLoc,feedCoords(a))-haversine(S.userLoc,feedCoords(b));});}
     else{feeds.sort(function(a,b){return b.likes-a.likes});}
   }
   else{feeds.sort(function(a,b){return b.likes-a.likes});}
+  // 相册模式下切换标题与隐藏 tabs
+  var titleEl=document.getElementById('cmHeaderTitle');
+  var subEl=document.getElementById('cmHeaderSub');
+  var tabsEl=document.getElementById('cmTabs');
+  if(S.albumFilter){
+    if(titleEl)titleEl.textContent='我的相册';
+    if(subEl)subEl.textContent='仅显示你拍摄的照片';
+    if(tabsEl)tabsEl.style.display='none';
+  }else{
+    if(titleEl)titleEl.textContent='天空社区';
+    if(subEl)subEl.textContent='实拍即校验 · 真实天气众包';
+    if(tabsEl)tabsEl.style.display='flex';
+  }
   var html='';
+  if(S.albumFilter&&feeds.length===0){
+    html='<div style="padding:40px 20px;text-align:center;color:var(--text-secondary);font-size:13px">还没有自己的实拍，去拍一张吧～</div>';
+  }
   feeds.forEach(function(f){
     var likeCls=f.liked?'liked':'';
     var likeIcon=f.liked?'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>':'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
     html+='<div class="cm-card" onclick="openFeed('+f.id+')"><div class="'+(f.isImage?'<div class="cm-photo"><img src="'+f.photo+'" alt="实拍" style="width:100%;height:100%;object-fit:cover"></div>':'<div class="cm-photo cm-photo-'+f.photo+'">'+f.weather+'</div>')+'<div class="cm-card-body"><div class="cm-card-meta"><div class="cm-avatar" style="background:'+avatarColor(f.avatarColor)+'">'+f.user.charAt(0)+'</div><div><div class="cm-username">'+f.user+'</div><div class="cm-location">'+f.district+' \u00B7 '+f.time+'</div></div></div><div class="cm-caption">'+f.caption+'</div><div class="cm-card-actions"><div class="cm-action '+likeCls+'" onclick="event.stopPropagation();toggleLike('+f.id+',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+likeIcon+'</svg><span>'+f.likes+'</span></div><div class="cm-action" onclick="event.stopPropagation();openFeed('+f.id+')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>'+f.comments+'</span></div></div></div></div>';
   });
   document.getElementById('cmList').innerHTML=html;
+}
+// 进入"我的相册"：未登录提示，登录则只显示自己拍的照片
+function openMyAlbum(){
+  if(!S.loggedIn){
+    showToast('请先登录后查看');
+    showLoginModal();
+    return;
+  }
+  S.albumFilter=true;
+  S.filter='new';
+  showScreen('screen-community',true);
+  updateTabBars('community');
+  renderCommunity();
 }
 function avatarColor(c){
   var m={blue:'#3B82F6',orange:'#F59E0B',gray:'#6B7B95',green:'#10B981',purple:'#8B5CF6'};
@@ -1426,42 +1470,80 @@ function openFeed(id){
   showScreen('screen-feed-detail',true);
 }
 function toggleLike(id,el){
-  // 未登录时弹出登录/注册
-  if(!S.loggedIn){ showLoginModal(); return; }
-  api.toggleLike(id).then(function(res){
-    if(!res.ok){
-      if(res.status===401) showLoginModal();
-      else showToast('操作失败，请重试');
-      return;
-    }
-    var result=res.data;
-    var f=FEEDS.find(function(x){return x.id===id});
-    if(f){
-      f.liked=result.liked;
-      f.likes=result.likes;
-    }
-    if(el){
-      el.classList.toggle('liked',result.liked);
-      var svg=el.querySelector('svg');
-      if(result.liked){
+  // 未登录时提示并弹出登录/注册
+  if(!S.loggedIn){ showToast('请先登录'); showLoginModal(); return; }
+  var f=FEEDS.find(function(x){return x.id===id});
+  if(!f)return;
+  // —— 乐观更新：先立即更新本地状态与 UI，再同步后端 ——
+  var prevLiked=f.liked;
+  var prevLikes=f.likes;
+  f.liked=!prevLiked;
+  f.likes=prevLikes+(f.liked?1:-1);
+  function applyTo(targetEl){
+    if(!targetEl)return;
+    targetEl.classList.toggle('liked',f.liked);
+    var svg=targetEl.querySelector('svg');
+    if(svg){
+      if(f.liked){
         svg.innerHTML='<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>';
       }else{
         svg.innerHTML='<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
       }
-      el.querySelector('span').textContent=result.likes;
     }
-    // If on feed detail, also update
-    if(S.feedId===id){
-      var fdLike=document.getElementById('fdLike');
-      if(fdLike&&el!==fdLike){
-        fdLike.classList.toggle('liked',result.liked);
-        fdLike.querySelector('span').textContent=result.likes;
+    var span=targetEl.querySelector('span');
+    if(span)span.textContent=f.likes;
+  }
+  applyTo(el);
+  // 若当前在动态详情页，同步更新详情页的点赞按钮
+  if(S.feedId===id){
+    var fdLike=document.getElementById('fdLike');
+    if(fdLike&&fdLike!==el)applyTo(fdLike);
+  }
+  // —— 同步后端；失败时回滚 UI 与状态 ——
+  api.toggleLike(id).then(function(res){
+    if(!res||!res.ok){
+      // 回滚
+      f.liked=prevLiked;
+      f.likes=prevLikes;
+      applyTo(el);
+      if(S.feedId===id){
+        var fdLike2=document.getElementById('fdLike');
+        if(fdLike2&&fdLike2!==el)applyTo(fdLike2);
+      }
+      if(res&&res.status===401){
+        showToast('请先登录');
+        showLoginModal();
+      }else{
+        showToast('点赞失败，已回滚');
+      }
+      return;
+    }
+    // 以服务端返回值为准做最终校正（防止本地与远端状态不一致）
+    var result=res.data||{};
+    if(typeof result.liked==='boolean'&&typeof result.likes==='number'){
+      f.liked=result.liked;
+      f.likes=result.likes;
+      applyTo(el);
+      if(S.feedId===id){
+        var fdLike3=document.getElementById('fdLike');
+        if(fdLike3&&fdLike3!==el)applyTo(fdLike3);
       }
     }
+  }).catch(function(){
+    // 网络错误也回滚
+    f.liked=prevLiked;
+    f.likes=prevLikes;
+    applyTo(el);
+    if(S.feedId===id){
+      var fdLike4=document.getElementById('fdLike');
+      if(fdLike4&&fdLike4!==el)applyTo(fdLike4);
+    }
+    showToast('网络异常，点赞已回滚');
   });
 }
 function showCommentModal(){
-  if(!S.loggedIn){showLoginModal();return;}
+  if(!S.loggedIn){showToast('请先登录');showLoginModal();return;}
+  if(!S.feedId){showToast('请先打开一条动态');return;}
   document.getElementById('commentModal').classList.add('show');
   setTimeout(function(){document.getElementById('commentInput').focus();},100);
 }
@@ -1469,60 +1551,210 @@ function hideCommentModal(){
   document.getElementById('commentModal').classList.remove('show');
   document.getElementById('commentInput').value='';
 }
-function submitComment(){
-  var text=document.getElementById('commentInput').value.trim();
-  if(!text){showToast('请输入评论内容');return;}
-  hideCommentModal();
-  if(S.feedId){
-    api.addComment(S.feedId,text).then(function(res){
-      if(!res.ok){ if(res.status===401) showLoginModal(); else showToast('评论失败，请重试'); return; }
-      var result=res.data;
-      var f=FEEDS.find(function(x){return x.id===S.feedId});
-      if(f){
-        f.comments_list.push(result.comment);
-        f.comments=result.comments;
-        openFeed(S.feedId);
-      }
-    });
+// 把一条评论追加到详情页评论列表的 DOM 中（乐观更新用）
+function appendCommentToDOM(c){
+  var box=document.getElementById('fdComments');
+  if(!box)return;
+  var div=document.createElement('div');
+  div.className='fd-comment';
+  div.innerHTML='<div class="fd-c-avatar" style="background:'+avatarColor(c.color)+'">'+(c.name||'').charAt(0)+'</div><div class="fd-c-body"><div class="fd-c-name">'+c.name+'</div><div class="fd-c-text">'+c.text+'</div><div class="fd-c-time">'+c.time+'</div></div>';
+  box.appendChild(div);
+}
+// 更新详情页评论数显示
+function updateFdCommentCount(num){
+  var titleEl=document.querySelector('.fd-comments-title');
+  if(titleEl)titleEl.textContent='全部评论 ('+num+')';
+  var fdAction=document.querySelectorAll('.fd-action');
+  // 评论按钮是详情页操作栏的第二个 .fd-action
+  if(fdAction.length>=2){
+    var span=fdAction[1].querySelector('span');
+    if(span)span.textContent=num;
   }
-  showToast('评论发布成功');
+}
+function submitComment(){
+  var inputEl=document.getElementById('commentInput');
+  var text=inputEl.value.trim();
+  if(!text){showToast('请输入评论内容');return;}
+  if(!S.feedId){showToast('请先打开一条动态');hideCommentModal();return;}
+  hideCommentModal();
+  var f=FEEDS.find(function(x){return x.id===S.feedId});
+  if(!f){return;}
+  // —— 乐观更新：先在本地追加评论并刷新计数 ——
+  var optimisticComment={name:S.username||'我',color:'blue',text:text,time:'刚刚'};
+  f.comments_list.push(optimisticComment);
+  f.comments+=1;
+  appendCommentToDOM(optimisticComment);
+  updateFdCommentCount(f.comments);
+  // —— 同步后端 ——
+  api.addComment(S.feedId,text).then(function(res){
+    if(!res||!res.ok){
+      // 回滚：移除最后追加的评论
+      f.comments_list.pop();
+      f.comments-=1;
+      // 重新渲染详情页以恢复正确列表
+      openFeed(S.feedId);
+      if(res&&res.status===401){
+        showToast('请先登录');
+        showLoginModal();
+      }else{
+        showToast('评论失败，请重试');
+      }
+      return;
+    }
+    var result=res.data||{};
+    // 以服务端返回的评论对象覆盖本地的乐观评论（拿到稳定的 name/time 等）
+    if(result.comment){
+      var idx=f.comments_list.length-1;
+      if(idx>=0)f.comments_list[idx]=result.comment;
+    }
+    if(typeof result.comments==='number'){
+      f.comments=result.comments;
+      updateFdCommentCount(f.comments);
+    }
+    // 重新渲染详情页以反映最终评论内容
+    openFeed(S.feedId);
+    showToast('评论发布成功');
+  }).catch(function(){
+    // 网络异常回滚
+    f.comments_list.pop();
+    f.comments-=1;
+    openFeed(S.feedId);
+    showToast('网络异常，评论已回滚');
+  });
 }
 function submitFdComment(){
   var input=document.getElementById('fdInput');
   if(!input)return;
   var text=input.value.trim();
   if(!text){showToast('请输入评论内容');return;}
-  if(S.feedId){
-    api.addComment(S.feedId,text).then(function(res){
-      if(!res.ok){ if(res.status===401) showLoginModal(); else showToast('评论失败，请重试'); return; }
-      var result=res.data;
-      var f=FEEDS.find(function(x){return x.id===S.feedId});
-      if(f){
-        f.comments_list.push(result.comment);
-        f.comments=result.comments;
-      }
-      input.value='';
+  if(!S.feedId){return;}
+  var f=FEEDS.find(function(x){return x.id===S.feedId});
+  if(!f){return;}
+  // —— 乐观更新 ——
+  var optimisticComment={name:S.username||'我',color:'blue',text:text,time:'刚刚'};
+  f.comments_list.push(optimisticComment);
+  f.comments+=1;
+  appendCommentToDOM(optimisticComment);
+  updateFdCommentCount(f.comments);
+  input.value='';
+  // —— 同步后端 ——
+  api.addComment(S.feedId,text).then(function(res){
+    if(!res||!res.ok){
+      f.comments_list.pop();
+      f.comments-=1;
       openFeed(S.feedId);
-    });
-  }
-  showToast('评论发布成功');
+      if(res&&res.status===401){
+        showToast('请先登录');
+        showLoginModal();
+      }else{
+        showToast('评论失败，请重试');
+      }
+      return;
+    }
+    var result=res.data||{};
+    if(result.comment){
+      var idx=f.comments_list.length-1;
+      if(idx>=0)f.comments_list[idx]=result.comment;
+    }
+    if(typeof result.comments==='number'){
+      f.comments=result.comments;
+      updateFdCommentCount(f.comments);
+    }
+    openFeed(S.feedId);
+    showToast('评论发布成功');
+  }).catch(function(){
+    f.comments_list.pop();
+    f.comments-=1;
+    openFeed(S.feedId);
+    showToast('网络异常，评论已回滚');
+  });
 }
 
 // ===== Notifications =====
+// 关注状态：localStorage 持久化（key: wb_following），值为用户名数组
+function getFollowing(){
+  try{ return JSON.parse(localStorage.getItem('wb_following')||'[]'); }catch(e){ return []; }
+}
+function isFollowing(username){
+  if(!username)return false;
+  return getFollowing().indexOf(username)>=0;
+}
+function setFollowing(username,follow){
+  if(!username)return;
+  var list=getFollowing();
+  var idx=list.indexOf(username);
+  if(follow&&idx<0)list.push(username);
+  if(!follow&&idx>=0)list.splice(idx,1);
+  localStorage.setItem('wb_following',JSON.stringify(list));
+}
+// 粉丝列表（前端模拟，登录用户固定拥有一批示例粉丝）
+function getFollowers(){
+  try{ return JSON.parse(localStorage.getItem('wb_followers')||'null'); }catch(e){ return null; }
+}
+function ensureFollowers(){
+  var f=getFollowers();
+  if(f)return f;
+  f=['天空观察者','云朵收藏家','晚霞猎人','气象迷','环保达人'];
+  localStorage.setItem('wb_followers',JSON.stringify(f));
+  return f;
+}
 function openNotifications(){
   renderNotifications();
   showScreen('screen-notifications',true);
   updateBellBadge();
 }
 function renderNotifications(){
+  var iconMap={
+    alert:'<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+    report:'<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/>',
+    reminder:'<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+    like:'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>',
+    comment:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
+  };
+  var clsMap={alert:'nt-icon-alert',report:'nt-icon-report',reminder:'nt-icon-reminder',like:'nt-icon-like',comment:'nt-icon-comment'};
   var html='';
   NOTIFICATIONS.forEach(function(n,i){
-    var iconMap={alert:'<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',report:'<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/>',reminder:'<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'};
-    var clsMap={alert:'nt-icon-alert',report:'nt-icon-report',reminder:'nt-icon-reminder'};
     var tStr=formatTime(n.time);
-    html+='<div class="nt-item'+(n.read?'':' unread')+'" onclick="readNotif('+i+')"><div class="nt-icon '+clsMap[n.type]+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+iconMap[n.type]+'</svg></div><div class="nt-body"><div class="nt-title">'+n.title+'</div><div class="nt-text">'+n.text+'</div><div class="nt-time">'+tStr+'</div></div></div>';
+    var actionsHtml='';
+    // 获赞/获评论通知：提供"回复"与"关注/已关注"按钮
+    if(n.type==='like'||n.type==='comment'){
+      var actor=n.actor||'';
+      var followCls=isFollowing(actor)?'following':'primary';
+      var followText=isFollowing(actor)?'已关注':'+ 关注';
+      actionsHtml='<div class="nt-actions">'+
+        '<button class="nt-action-btn primary" onclick="event.stopPropagation();replyToNotif('+i+')">回复</button>'+
+        '<button class="nt-action-btn '+followCls+'" id="ntFollowBtn_'+i+'" onclick="event.stopPropagation();toggleFollowFromNotif('+i+')">'+followText+'</button>'+
+      '</div>';
+    }
+    html+='<div class="nt-item'+(n.read?'':' unread')+'" onclick="readNotif('+i+')"><div class="nt-icon '+(clsMap[n.type]||'nt-icon-report')+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+(iconMap[n.type]||iconMap.report)+'</svg></div><div class="nt-body"><div class="nt-title">'+n.title+'</div><div class="nt-text">'+n.text+'</div><div class="nt-time">'+tStr+'</div>'+actionsHtml+'</div></div>';
   });
   document.getElementById('ntList').innerHTML=html;
+}
+// 通知页"回复"按钮：跳转到对应动态详情并打开评论框
+function replyToNotif(i){
+  var n=NOTIFICATIONS[i];
+  if(!n)return;
+  if(n.feedId){
+    openFeed(n.feedId);
+    setTimeout(function(){ showCommentModal(); },300);
+  }else{
+    showToast('该通知暂无可回复的动态');
+  }
+}
+// 通知页"关注/已关注"按钮：切换关注状态并更新按钮显示
+function toggleFollowFromNotif(i){
+  if(!S.loggedIn){showToast('请先登录');showLoginModal();return;}
+  var n=NOTIFICATIONS[i];
+  if(!n||!n.actor){return;}
+  var actor=n.actor;
+  var nowFollowing=!isFollowing(actor);
+  setFollowing(actor,nowFollowing);
+  var btn=document.getElementById('ntFollowBtn_'+i);
+  if(btn){
+    btn.textContent=nowFollowing?'已关注':'+ 关注';
+    btn.className='nt-action-btn '+(nowFollowing?'following':'primary');
+  }
+  showToast(nowFollowing?'已关注 '+actor:'已取消关注 '+actor);
 }
 function formatTime(ts){
   var diff=Date.now()-ts;
@@ -1544,6 +1776,9 @@ function readNotif(i){
       document.getElementById('adMeta').textContent='发布时间：'+formatTime(n.time);
       document.getElementById('adBody').innerHTML='<div class="ad-section"><h3>预警内容</h3><p>'+n.text+'</p></div><div class="ad-section"><h3>防御指南</h3><p>1. 政府及相关部门按照职责做好防暴雨工作。<br>2. 交通管理部门根据路况在强降雨路段实行交通管制。<br>3. 切断低洼地带有危险的室外电源。<br>4. 转移危险地带和危房中人员到安全场所。</p></div>';
       showScreen('screen-alert-detail',true);
+    }else if(n.type==='like'||n.type==='comment'){
+      // 获赞/获评论通知：点击跳转到对应动态详情
+      if(n.feedId){openFeed(n.feedId);}else{showToast(n.title);}
     }else{
       showToast(n.title);
     }
@@ -1564,16 +1799,33 @@ function updateBellBadge(){
 }
 
 // ===== Profile =====
+// 头像持久化（localStorage）：值为 dataURL 字符串
+function getAvatarImage(){ return localStorage.getItem('wb_avatar')||''; }
+function setAvatarImage(dataUrl){ localStorage.setItem('wb_avatar',dataUrl||''); }
+// 渲染头像元素：优先用图片，否则用用户名首字母；保留右下角相机图标 overlay
+var _AVATAR_OVERLAY_HTML='<div style="position:absolute;right:-2px;bottom:-2px;width:22px;height:22px;border-radius:50%;background:var(--accent);border:2px solid #fff;display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" style="width:12px;height:12px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>';
+function applyAvatarTo(el){
+  if(!el)return;
+  var img=getAvatarImage();
+  if(img){
+    el.innerHTML='<img src="'+img+'" alt="头像" style="width:100%;height:100%;border-radius:50%;object-fit:cover">'+_AVATAR_OVERLAY_HTML;
+  }else{
+    var ch=(S.username||'W').charAt(0).toUpperCase();
+    el.innerHTML=ch+_AVATAR_OVERLAY_HTML;
+  }
+}
 function renderProfile(){
   var lr=document.getElementById('logoutRow');
+  var avatarEl=document.getElementById('pfAvatar');
   if(S.loggedIn){
-    document.getElementById('pfAvatar').textContent=(S.username||'W').charAt(0).toUpperCase();
+    applyAvatarTo(avatarEl);
     document.getElementById('pfName').textContent=S.username||'用户';
     document.getElementById('pfId').textContent='ID: '+S.userId;
     document.getElementById('pfId').onclick=null;
     if(lr)lr.style.display='flex';
   }else{
-    document.getElementById('pfAvatar').textContent='W';
+    // 未登录：若有自定义头像仍展示，否则用占位字母 W；统一通过 applyAvatarTo 保留相机 overlay
+    applyAvatarTo(avatarEl);
     document.getElementById('pfName').textContent='未登录';
     document.getElementById('pfId').textContent='点击登录 / 注册';
     document.getElementById('pfId').style.cursor='pointer';
@@ -1582,7 +1834,113 @@ function renderProfile(){
   }
   document.getElementById('pfStatPhotos').textContent=S.photos;
   document.getElementById('pfStatLikes').textContent=S.likes;
-  document.getElementById('pfStatBadges').textContent=S.badges;
+  document.getElementById('pfStatFollowers').textContent=ensureFollowers().length;
+  document.getElementById('pfStatFollowing').textContent=getFollowing().length;
+}
+// 打开粉丝/关注列表
+function openFollowList(type){
+  if(!S.loggedIn){showToast('请先登录');showLoginModal();return;}
+  var titleEl=document.getElementById('followListTitle');
+  var contentEl=document.getElementById('followListContent');
+  var list=type==='following'?getFollowing():ensureFollowers();
+  titleEl.textContent=type==='following'?'我的关注':'我的粉丝';
+  if(list.length===0){
+    contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">暂无'+(type==='following'?'关注':'粉丝')+'</div>';
+  }else{
+    var html='';
+    list.forEach(function(name){
+      var following=isFollowing(name);
+      var btnHtml=type==='following'?
+        '<button class="nt-action-btn following" onclick="unfollowFromList(this,\''+name.replace(/'/g,"\\'")+'\')">已关注</button>':
+        '<button class="nt-action-btn '+(following?'following':'primary')+'" onclick="toggleFollowFromList(this,\''+name.replace(/'/g,"\\'")+'\')">'+(following?'已关注':'+ 关注')+'</button>';
+      html+='<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)"><div style="width:36px;height:36px;border-radius:50%;background:'+avatarColor('blue')+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600">'+name.charAt(0)+'</div><div style="flex:1;font-size:14px;font-weight:500">'+name+'</div>'+btnHtml+'</div>';
+    });
+    contentEl.innerHTML=html;
+  }
+  document.getElementById('followListModal').classList.add('show');
+}
+function hideFollowListModal(){ document.getElementById('followListModal').classList.remove('show'); }
+function toggleFollowFromList(btn,username){
+  if(!S.loggedIn){showToast('请先登录');showLoginModal();return;}
+  var nowFollowing=!isFollowing(username);
+  setFollowing(username,nowFollowing);
+  btn.textContent=nowFollowing?'已关注':'+ 关注';
+  btn.className='nt-action-btn '+(nowFollowing?'following':'primary');
+  document.getElementById('pfStatFollowing').textContent=getFollowing().length;
+  showToast(nowFollowing?'已关注 '+username:'已取消关注 '+username);
+}
+function unfollowFromList(btn,username){
+  setFollowing(username,false);
+  document.getElementById('pfStatFollowing').textContent=getFollowing().length;
+  // 重新渲染列表（移除该项）
+  openFollowList('following');
+  showToast('已取消关注 '+username);
+}
+
+// ===== 头像更换 =====
+// 打开头像选择菜单（拍照 / 从相册选择 / 取消）
+function openAvatarPicker(){
+  if(!S.loggedIn){showToast('请先登录');showLoginModal();return;}
+  document.getElementById('avatarPickerModal').classList.add('show');
+}
+function hideAvatarPickerModal(){ document.getElementById('avatarPickerModal').classList.remove('show'); }
+// "拍照"：进入头像拍摄模式（复用相机流程，capturePhoto 时根据标志走头像分支）
+function avatarTakePhoto(){
+  hideAvatarPickerModal();
+  S.avatarCaptureMode=true;
+  goToCamera();
+}
+// "从相册选择"：触发隐藏的 file input
+function avatarPickFromAlbum(){
+  hideAvatarPickerModal();
+  var input=document.getElementById('avatarFileInput');
+  if(input){input.value='';input.click();}
+}
+// file input 选中文件后：读取为 dataURL 并应用为头像
+function onAvatarFileSelected(input){
+  if(!input||!input.files||!input.files[0])return;
+  var file=input.files[0];
+  if(!file.type.startsWith('image/')){showToast('请选择图片文件');return;}
+  var reader=new FileReader();
+  reader.onload=function(e){
+    applyAvatarFromDataURL(e.target.result);
+  };
+  reader.onerror=function(){showToast('图片读取失败');};
+  reader.readAsDataURL(file);
+}
+// 把 dataURL 应用为头像并持久化到 localStorage
+function applyAvatarFromDataURL(dataUrl){
+  if(!dataUrl){return;}
+  // 简单压缩到合理尺寸（用 canvas 缩放到 200x200）
+  try{
+    var img=new Image();
+    img.onload=function(){
+      var canvas=document.createElement('canvas');
+      var size=200;
+      canvas.width=size;canvas.height=size;
+      var ctx=canvas.getContext('2d');
+      // 居中裁剪为正方形
+      var minDim=Math.min(img.width,img.height);
+      var sx=(img.width-minDim)/2;
+      var sy=(img.height-minDim)/2;
+      ctx.drawImage(img,sx,sy,minDim,minDim,0,0,size,size);
+      var compressed=canvas.toDataURL('image/jpeg',0.85);
+      setAvatarImage(compressed);
+      applyAvatarTo(document.getElementById('pfAvatar'));
+      showToast('头像已更新');
+    };
+    img.onerror=function(){
+      // 图片加载失败时直接用原图
+      setAvatarImage(dataUrl);
+      applyAvatarTo(document.getElementById('pfAvatar'));
+      showToast('头像已更新');
+    };
+    img.src=dataUrl;
+  }catch(e){
+    setAvatarImage(dataUrl);
+    applyAvatarTo(document.getElementById('pfAvatar'));
+    showToast('头像已更新');
+  }
 }
 
 // ===== Login / Register =====
@@ -1636,7 +1994,7 @@ function onAuthSuccess(payload){
 function logout(){
   localStorage.removeItem('wb_token');
   S.loggedIn=false; S.userId=''; S.username=''; S.email='';
-  S.photos=0; S.likes=0; S.badges=0;
+  S.photos=0; S.likes=0;
   renderProfile();
   showToast('已退出登录');
 }
@@ -1681,6 +2039,8 @@ function goToCamera(){
 }
 function closeCamera(){
   stopCamera();
+  // 关闭相机时重置头像拍摄模式标志
+  S.avatarCaptureMode=false;
   goBack();
 }
 function capturePhoto(){
@@ -1694,6 +2054,19 @@ function capturePhoto(){
       photoData=c.toDataURL('image/jpeg',0.7);
     }catch(e){photoData=null;}
   }
+  // —— 头像拍摄模式：把拍到的照片应用为头像，不发布到社区 ——
+  if(S.avatarCaptureMode){
+    S.avatarCaptureMode=false;
+    stopCamera();
+    if(photoData){
+      applyAvatarFromDataURL(photoData);
+      switchTab('profile');
+    }else{
+      showToast('未捕获到画面，请重试');
+      switchTab('profile');
+    }
+    return;
+  }
   // 组装一条新的社区动态（含真实照片或模拟）
   var w=LAST_WEATHER;
   var wStr=w?(w.desc+' · '+w.temp+'\u00B0C'):'晴 · 25\u00B0C';
@@ -1703,6 +2076,7 @@ function capturePhoto(){
     isImage:!!photoData,
     weather:wStr,
     user:S.username||'我',
+    owner:S.username||S.userId||'我',
     avatarColor:'blue',
     district:S.city+' '+S.district,
     time:'刚刚',
@@ -1768,7 +2142,6 @@ function applyUserProfile(u){
   S.email = u.email || '';
   S.photos = u.photos || 0;
   S.likes = u.likes || 0;
-  S.badges = u.badges || 0;
   renderProfile();
 }
 function restoreSession(){
