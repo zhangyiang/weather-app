@@ -77,8 +77,8 @@ html.app-mode .home-hero{padding-top:20px}
 .location-left svg{width:16px;height:16px}
 .location-name{font-size:17px;font-weight:600}
 .location-chevron{width:14px;height:14px;opacity:0.7}
-.refresh-btn{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;backdrop-filter:blur(8px);flex-shrink:0;transition:background 0.2s,transform 0.15s}
-.refresh-btn:active{background:rgba(255,255,255,0.35);transform:scale(0.92)}
+.refresh-btn{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.35);border:1.5px solid rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;backdrop-filter:blur(8px);flex-shrink:0;transition:background 0.2s,transform 0.15s;box-shadow:0 2px 8px rgba(0,0,0,0.15)}
+.refresh-btn:active{background:rgba(255,255,255,0.5);transform:scale(0.92)}
 .refresh-btn svg{width:18px;height:18px}
 .refresh-btn.spinning svg{animation:refreshSpin 0.8s linear infinite}
 @keyframes refreshSpin{to{transform:rotate(360deg)}}
@@ -240,6 +240,8 @@ html.app-mode .home-hero{padding-top:20px}
 .cm-username{font-size:12px;font-weight:600}
 .cm-location{font-size:11px;color:var(--text-secondary)}
 .cm-caption{font-size:13px;line-height:1.5;margin-bottom:8px}
+.cm-weather-tag{display:inline-flex;align-items:center;gap:5px;background:var(--accent-light);color:var(--accent);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;margin-bottom:8px;white-space:nowrap}
+.cm-weather-tag svg{flex-shrink:0}
 .cm-card-actions{display:flex;align-items:center;gap:16px}
 .cm-action{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);cursor:pointer}
 .cm-action svg{width:16px;height:16px}
@@ -1116,9 +1118,9 @@ function wIcon(type,sz){
   const s=sz||28;
   const m={
     sunny:'<circle cx="32" cy="32" r="14" fill="#FBBF24"/><g stroke="#FBBF24" stroke-width="3" stroke-linecap="round"><line x1="32" y1="6" x2="32" y2="14"/><line x1="32" y1="50" x2="32" y2="58"/><line x1="6" y1="32" x2="14" y2="32"/><line x1="50" y1="32" x2="58" y2="32"/><line x1="13" y1="13" x2="19" y2="19"/><line x1="45" y1="45" x2="51" y2="51"/><line x1="13" y1="51" x2="19" y2="45"/><line x1="45" y1="19" x2="51" y2="13"/></g>',
-    cloudy:'<path d="M16 44c-4 0-7-3-7-7 0-3 2-6 5-7 0-6 5-10 11-10 5 0 9 3 10 8 1-1 2-1 3-1 4 0 7 3 7 7 0 4-3 7-7 7H16z" fill="#B0BEC5"/>',
-    rainy:'<path d="M16 44c-4 0-7-3-7-7 0-3 2-6 5-7 0-6 5-10 11-10 5 0 9 3 10 8 1-1 2-1 3-1 4 0 7 3 7 7 0 4-3 7-7 7H16z" fill="#90A4AE"/><g fill="#60A5FA"><circle cx="22" cy="52" r="2"/><circle cx="32" cy="52" r="2"/><circle cx="42" cy="52" r="2"/></g>',
-    overcast:'<path d="M16 44c-4 0-7-3-7-7 0-3 2-6 5-7 0-6 5-10 11-10 5 0 9 3 10 8 1-1 2-1 3-1 4 0 7 3 7 7 0 4-3 7-7 7H16z" fill="#78909C"/><path d="M30 50c-3 0-5-2-5-5s2-5 5-5c0-4 3-7 7-7s7 3 7 7c3 0 5 2 5 5s-2 5-5 5H30z" fill="#90A4AE"/>'
+    cloudy:'<path d="M12 44 C8 44 4 40 4 36 C4 30 8 26 14 26 C14 20 20 16 26 16 C32 16 38 20 38 26 C44 26 48 30 48 36 C48 40 44 44 40 44 L12 44 Z" fill="#B0BEC5"/>',
+    rainy:'<path d="M12 44 C8 44 4 40 4 36 C4 30 8 26 14 26 C14 20 20 16 26 16 C32 16 38 20 38 26 C44 26 48 30 48 36 C48 40 44 44 40 44 L12 44 Z" fill="#90A4AE"/><g fill="#60A5FA"><circle cx="18" cy="52" r="2"/><circle cx="28" cy="52" r="2"/><circle cx="38" cy="52" r="2"/></g>',
+    overcast:'<path d="M16 50 C12 50 8 46 8 42 C8 36 12 32 18 32 C18 26 24 22 30 22 C36 22 42 26 42 32 C48 32 52 36 52 42 C52 46 48 50 44 50 L16 50 Z" fill="#90A4AE"/><path d="M12 44 C8 44 4 40 4 36 C4 30 8 26 14 26 C14 20 20 16 26 16 C32 16 38 20 38 26 C44 26 48 30 48 36 C48 40 44 44 40 44 L12 44 Z" fill="#78909C"/>'
   };
   return '<svg viewBox="0 0 64 64" style="width:'+s+'px;height:'+s+'px">'+(m[type]||m.sunny)+'</svg>';
 }
@@ -1672,7 +1674,7 @@ function feedCardHTML(f,opts){
     photoHtml='<div class="cm-photo"><img src="'+f.photo+'" alt="实拍" style="width:100%;height:100%;object-fit:cover"></div>';
   }else{
     var phClass='cm-photo-'+(f.photo||'blue');
-    photoHtml='<div class="cm-photo '+phClass+'">'+escHtml(f.weather||'')+'</div>';
+    photoHtml='<div class="cm-photo '+phClass+'"></div>';
   }
   // 删除按钮：仅自己的帖子显示
   var delHtml='';
@@ -1691,6 +1693,7 @@ function feedCardHTML(f,opts){
         '<div class="cm-location">'+escHtml(f.district)+' \u00B7 '+escHtml(f.time)+'</div></div>'+
       '</div>'+
       '<div class="cm-caption">'+(f.caption?escHtml(f.caption):'')+'</div>'+
+      (f.weather?'<div class="cm-weather-tag">'+wIcon(f.weather.indexOf('晴')>=0?'sunny':f.weather.indexOf('雨')>=0?'rainy':f.weather.indexOf('阴')>=0?'overcast':'cloudy',16)+'<span>'+escHtml(f.weather)+'</span></div>':'')+
       '<div class="cm-card-actions">'+
         '<div class="cm-action '+likeCls+'" onclick="event.stopPropagation();toggleLike('+f.id+',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+likeIcon+'</svg><span>'+f.likes+'</span></div>'+
         '<div class="cm-action" onclick="event.stopPropagation();openFeed('+f.id+')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>'+f.comments+'</span></div>'+

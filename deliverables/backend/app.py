@@ -987,7 +987,7 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
     # 指定预测模型：不同数据源使用不同数值模式，体现真实预报差异
     params_with_model = dict(weather_params)
     if model:
-        params_with_model["model"] = model
+        params_with_model["models"] = model
     aqi_params = {"latitude": lat, "longitude": lon, "current": "us_aqi"}
 
     # 主天气数据：带重试（3次）；若指定模型失败则回退到 best_match（默认融合）
