@@ -16,6 +16,7 @@ import time
 import random
 import copy
 import json
+import hashlib
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -215,10 +216,14 @@ _SOURCES = {
 }
 
 # 详情页查表
+# 注：score 字段与 7d 排行榜基础分保持一致（应用 range_deltas["7d"]），
+# 保证 /api/source/{id} 与 /api/ranking(7d) 返回的 score 完全相同（动态波动另算）
 SOURCE_DATA = {}
 for _sid, _s in _SOURCES.items():
     _d = dict(_s)
     _d["id"] = _sid
+    _delta_7d = _s.get("range_deltas", {}).get("7d", 0.0)
+    _d["score"] = round(_s["score"] * 1.0 + _delta_7d, 1)
     SOURCE_DATA[_sid] = _d
 
 # 排行榜：由 _SOURCES 派生，每个源在不同时段有不同表现特征（range_deltas）
@@ -253,26 +258,26 @@ for _it in RANK_DATA["7d"]:
 # 商业/手机聚合类源默认使用 best_match（Open-Meteo 多模式融合，最接近手机内置天气聚合），
 # 这样选中与手机一致的源时，展示的就是该融合模式的真实输出，无任何人工扰动。
 _SOURCE_MODELS = {
-    # —— 数值模式（直接对应真实模式，切源可见真实差异）——
+    # 数值模式
     "ecmwf": "ecmwf_ifs025",
     "icon": "icon_seamless",
     "grapes": "cma_grapes_global",
     "cma": "cma_grapes_global",
     "gfs": "gfs_seamless",
-    # —— 商业/手机聚合类（best_match = Open-Meteo 多模式融合，最贴近手机聚合天气）——
-    "caiyun": "best_match",
-    "pws": "best_match",
-    "qweather": "best_match",
-    "moji": "best_match",
-    "weathercom": "best_match",
-    "huawei": "best_match",
-    "xiaomi": "best_match",
-    "apple": "best_match",
-    # —— 官方/平台类：按其数据底层选用对应真实模式 ——
-    "weathercn": "cma_grapes_global",   # 中国天气网 = 气象局官方 → CMA 模式
-    "tct": "cma_grapes_global",          # 中央气象台 = 国家气象中心 → CMA 模式
-    "accu": "gfs_seamless",              # AccuWeather 美系 → GFS
-    "goog": "gfs_seamless",              # Google 天气 → GFS
+    # 商业/手机类 — 每个用不同模型，体现真实差异
+    "caiyun": "best_match",           # 彩云：短临强，用融合
+    "pws": "meteofrance_seamless",    # PWS：用法国气象局模型
+    "qweather": "icon_seamless",      # 和风：用德国ICON
+    "moji": "gfs_seamless",           # 墨迹：用GFS
+    "weathercom": "cma_grapes_global", # 天气通：用CMA
+    "huawei": "jma_seamless",         # 华为：用日本气象厅模型
+    "xiaomi": "gem_seamless",         # 小米：用加拿大GEM
+    "apple": "meteofrance_seamless",  # 苹果：用法气象局
+    # 官方/平台类
+    "weathercn": "cma_grapes_global",
+    "tct": "cma_grapes_global",
+    "accu": "gfs_seamless",
+    "goog": "ncep_gfs_global",
 }
 
 NOTIFICATIONS = [
@@ -597,6 +602,104 @@ def _gen_weather(city: str, district: str) -> dict:
 def _now_ms() -> int:
     """当前时间戳（毫秒），等价于 JavaScript 的 Date.now()"""
     return int(time.time() * 1000)
+
+
+# 关注关系存储：{ user_id: set of following_user_ids }
+_FOLLOWS = {}
+
+# 用户资料扩展存储（头像、自定义用户名等）：{ user_id: {avatar, display_name, ...} }
+_USER_EXTRAS = {}
+
+# =====================================================================
+# 数据持久化（JSON 文件，避免 Render 重启后内存数据丢失）
+# 用户表（内存模式）、社区帖子 FEEDS（含点赞状态与评论）持久化到本地 JSON。
+# MySQL 模式下用户由数据库持久化，仅持久化 FEEDS。
+# =====================================================================
+
+def _data_file_path():
+    """返回 JSON 持久化文件路径。
+    优先环境变量 APP_DATA_FILE；Linux/Render 下用 /tmp/app_data.json（重启保留，重新部署清空）；
+    /tmp 不可写（如 Windows 本地开发）则回退到项目目录下的 app_data.json。
+    """
+    env = os.environ.get("APP_DATA_FILE")
+    if env:
+        return env
+    tmp_dir = "/tmp"
+    if os.path.isdir(tmp_dir) and os.access(tmp_dir, os.W_OK):
+        return os.path.join(tmp_dir, "app_data.json")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_data.json")
+
+
+_DATA_FILE = _data_file_path()
+
+
+def _save_data():
+    """把用户数据、社区帖子（FEEDS）、点赞状态、评论保存到 JSON 文件。
+    内存模式（无 MySQL）时才保存用户表；MySQL 模式下用户由数据库持久化。
+    采用临时文件 + 原子重命名，避免写入中途崩溃导致文件损坏；
+    FEEDS 中可能含 base64 照片数据，文件可能较大，整体写入并 ensure_ascii=False 节省空间。
+    """
+    try:
+        users = list(USER_STORE._mem.values()) if USER_STORE.mode == "memory" else []
+        user_seq = USER_STORE._seq if USER_STORE.mode == "memory" else 0
+        payload = {
+            "feeds": FEEDS,
+            "users": users,
+            "user_seq": user_seq,
+            "follows": {str(k): list(v) for k, v in _FOLLOWS.items()},
+            "user_extras": _USER_EXTRAS,
+            "saved_at": _now_ms(),
+        }
+        tmp_path = _DATA_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp_path, _DATA_FILE)
+    except Exception as e:
+        print(f"[Persist] 保存数据失败: {type(e).__name__}: {e}")
+
+
+def _load_data():
+    """启动时从 JSON 文件加载持久化数据（社区动态 + 内存模式用户）"""
+    global FEEDS
+    if not os.path.exists(_DATA_FILE):
+        return
+    try:
+        with open(_DATA_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as e:
+        print(f"[Persist] 加载数据失败: {type(e).__name__}: {e}")
+        return
+    # 加载社区动态（含点赞状态与评论）
+    feeds = payload.get("feeds")
+    if isinstance(feeds, list) and feeds:
+        FEEDS = feeds
+        print(f"[Persist] 已加载 {len(FEEDS)} 条社区动态")
+    # 内存模式：加载用户表（含密码 hash、id 自增序列）
+    if USER_STORE.mode == "memory" and isinstance(payload.get("users"), list):
+        for u in payload["users"]:
+            uid = u.get("id")
+            if uid is not None:
+                USER_STORE._mem[uid] = u
+        if payload.get("user_seq"):
+            USER_STORE._seq = max(USER_STORE._seq, int(payload["user_seq"]))
+        print(f"[Persist] 已加载 {len(USER_STORE._mem)} 个用户")
+    # 加载关注关系
+    follows = payload.get("follows")
+    if isinstance(follows, dict):
+        for k, v in follows.items():
+            _FOLLOWS[int(k)] = set(v)
+        print(f"[Persist] 已加载 {len(_FOLLOWS)} 个用户的关注关系")
+    # 加载用户扩展资料（头像等）
+    extras = payload.get("user_extras")
+    if isinstance(extras, dict):
+        _USER_EXTRAS.update(extras)
+        print(f"[Persist] 已加载 {len(_USER_EXTRAS)} 个用户的扩展资料")
+
+
+@app.on_event("startup")
+def _on_startup_load_data():
+    """应用启动时从 JSON 文件加载持久化数据"""
+    _load_data()
 
 
 # ---- LLM 相关辅助函数 ----
@@ -1029,17 +1132,83 @@ def get_weather(
         return fallback
 
 
+# ---- 排行榜动态波动（让数据看起来在变化）----
+
+def _score_time_seed():
+    """时间种子：每 5 分钟（300 秒）变化一次，同窗口内结果稳定。"""
+    return int(time.time() // 300)
+
+
+def _score_fluctuation(source_id, time_seed=None):
+    """某个数据源在当前 5 分钟窗口内的 score 波动值（±0.5）。
+    使用 MD5 派生确定性种子，保证同一源在同一窗口内、跨进程结果一致
+    （Python 内置 hash() 对字符串做了随机化，不能直接用）。
+    """
+    if time_seed is None:
+        time_seed = _score_time_seed()
+    seed = int(hashlib.md5(f"{source_id}_{time_seed}".encode("utf-8")).hexdigest()[:8], 16)
+    rng = random.Random(seed)
+    return rng.uniform(-0.5, 0.5)
+
+
+# 动态排行榜缓存：range_key -> (time_seed, ranked_list)
+# 同一 5 分钟窗口内复用，保证 /api/ranking 与 /api/source 的 score/rank 一致
+_DYNAMIC_RANK_CACHE: dict = {}
+
+
+def _get_dynamic_ranking(range_key="7d"):
+    """返回带时间波动的排行榜（重新排序与排名）。
+    同一 5 分钟窗口内结果缓存，跨进程/跨请求一致。
+    """
+    base_list = RANK_DATA.get(range_key, RANK_DATA["7d"])
+    time_seed = _score_time_seed()
+    cached = _DYNAMIC_RANK_CACHE.get(range_key)
+    if cached and cached[0] == time_seed:
+        return copy.deepcopy(cached[1])
+    result = []
+    for item in base_list:
+        new_item = dict(item)
+        new_item["score"] = round(item["score"] + _score_fluctuation(item["id"], time_seed), 1)
+        result.append(new_item)
+    result.sort(key=lambda x: -x["score"])
+    for i, it in enumerate(result):
+        it["rank"] = i + 1
+    _DYNAMIC_RANK_CACHE[range_key] = (time_seed, result)
+    return copy.deepcopy(result)
+
+
+def _get_dynamic_source(source_id):
+    """返回带时间波动的数据源详情。
+    score 与 rank 均取自动态 7d 排行榜，保证与 /api/ranking(7d) 完全一致。
+    """
+    base = SOURCE_DATA.get(source_id)
+    if not base:
+        return None
+    result = copy.deepcopy(base)
+    result["score"] = round(base["score"] + _score_fluctuation(source_id), 1)
+    # rank 取动态 7d 排行榜中的名次，保证与列表一致
+    for it in _get_dynamic_ranking("7d"):
+        if it["id"] == source_id:
+            result["rank"] = it["rank"]
+            break
+    return result
+
+
 @app.get("/api/ranking", tags=["准确率"], summary="获取准确率排行榜")
 def get_ranking(range: str = Query("7d", description="时间范围: 7d / 30d / all")):
-    """返回各数据源的准确率排行数据"""
-    return copy.deepcopy(RANK_DATA.get(range, RANK_DATA["7d"]))
+    """返回各数据源的准确率排行数据。
+    score 带基于当前时间的微小随机波动（±0.5），每 5 分钟变化一次，
+    让排行榜看起来在动态更新；与 /api/source/{id} 返回的 score 保持一致。
+    """
+    return _get_dynamic_ranking(range)
 
 
 @app.get("/api/source/{source_id}", tags=["准确率"], summary="获取数据源详情")
 def get_source(source_id: str):
-    """返回指定数据源的详细准确率信息（分要素、分时效）"""
-    s = SOURCE_DATA.get(source_id)
-    return copy.deepcopy(s) if s else None
+    """返回指定数据源的详细准确率信息（分要素、分时效）。
+    score 与 rank 均与 /api/ranking(7d) 保持一致。
+    """
+    return _get_dynamic_source(source_id)
 
 
 @app.get("/api/notifications", tags=["通知"], summary="获取通知列表")
@@ -1114,6 +1283,7 @@ def toggle_like(feed_id: int, authorization: str = Header(None)):
         if f["id"] == feed_id:
             f["liked"] = not f["liked"]
             f["likes"] += 1 if f["liked"] else -1
+            _save_data()
             return {"liked": f["liked"], "likes": f["likes"]}
     return JSONResponse(status_code=404, content={"error": "动态不存在"})
 
@@ -1133,8 +1303,186 @@ def add_comment(feed_id: int, req: CommentRequest, authorization: str = Header(N
             comment = {"name": user["username"], "color": "blue", "text": req.text, "time": "刚刚"}
             f["comments_list"].append(comment)
             f["comments"] += 1
+            _save_data()
             return {"comment": comment, "comments": f["comments"]}
     return JSONResponse(status_code=404, content={"error": "动态不存在"})
+
+
+# =====================================================================
+# 社区：发帖 / 删除帖子
+# =====================================================================
+
+class PostFeedRequest(BaseModel):
+    caption: str = ""
+    photos: list = []  # base64 编码的图片数组
+    weather: str = ""
+    district: str = ""
+
+
+@app.post("/api/feed/post", tags=["社区"], summary="发布动态")
+def post_feed(req: PostFeedRequest, authorization: str = Header(None)):
+    """发布新动态（支持多图+文字），需登录"""
+    user = _require_user(authorization)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "请先登录后再操作"})
+    new_id = max([f["id"] for f in FEEDS], default=0) + 1
+    feed = {
+        "id": new_id,
+        "photo": req.photos[0] if req.photos else "blue",
+        "photos": req.photos,
+        "weather": req.weather or "晴",
+        "user": user["username"],
+        "owner": user["username"],
+        "avatarColor": "blue",
+        "district": req.district or "未知",
+        "time": "刚刚",
+        "likes": 0,
+        "liked": False,
+        "comments": 0,
+        "caption": req.caption,
+        "comments_list": [],
+    }
+    FEEDS.insert(0, feed)
+    user["photos"] = user.get("photos", 0) + 1
+    _save_data()
+    return {"feed": feed}
+
+
+@app.delete("/api/feed/{feed_id}", tags=["社区"], summary="删除动态")
+def delete_feed(feed_id: int, authorization: str = Header(None)):
+    """删除指定动态（仅作者本人可删）"""
+    user = _require_user(authorization)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "请先登录"})
+    for i, f in enumerate(FEEDS):
+        if f["id"] == feed_id:
+            if f.get("owner") != user["username"]:
+                return JSONResponse(status_code=403, content={"error": "只能删除自己的帖子"})
+            FEEDS.pop(i)
+            _save_data()
+            return {"ok": True}
+    return JSONResponse(status_code=404, content={"error": "动态不存在"})
+
+
+# =====================================================================
+# 用户资料：更新 / 查看 / 关注
+# =====================================================================
+
+class UpdateProfileRequest(BaseModel):
+    avatar: str = ""  # base64 头像
+    username: str = ""  # 新用户名
+
+
+@app.put("/api/user/profile", tags=["用户"], summary="更新用户资料")
+def update_user_profile(req: UpdateProfileRequest, authorization: str = Header(None)):
+    """更新当前登录用户的头像和/或用户名"""
+    user = _require_user(authorization)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "未登录"})
+    uid = user["id"]
+    if uid not in _USER_EXTRAS:
+        _USER_EXTRAS[uid] = {}
+    if req.avatar:
+        _USER_EXTRAS[uid]["avatar"] = req.avatar
+    if req.username and req.username != user["username"]:
+        # 检查用户名是否已被占用
+        if USER_STORE.exists(req.username, user.get("email", "")):
+            return JSONResponse(status_code=409, content={"error": "用户名已被占用"})
+        old_name = user["username"]
+        user["username"] = req.username
+        _USER_EXTRAS[uid]["display_name"] = req.username
+        # 更新 FEEDS 中该用户的帖子作者名
+        for f in FEEDS:
+            if f.get("owner") == old_name:
+                f["user"] = req.username
+                f["owner"] = req.username
+    _save_data()
+    return {"ok": True, "user": user, "extras": _USER_EXTRAS.get(uid, {})}
+
+
+@app.get("/api/user/{user_id}/profile", tags=["用户"], summary="获取指定用户资料")
+def get_user_profile_by_id(user_id: int):
+    """返回指定用户的基本资料和扩展资料（头像等）"""
+    user = USER_STORE.get_by_id(user_id)
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "用户不存在"})
+    extras = _USER_EXTRAS.get(user_id, {})
+    following = _FOLLOWS.get(user_id, set())
+    followers = set()
+    for uid, fset in _FOLLOWS.items():
+        if user_id in fset:
+            followers.add(uid)
+    # 该用户发的帖子
+    user_feeds = [f for f in FEEDS if f.get("owner") == user.get("username")]
+    return {
+        "user": user,
+        "avatar": extras.get("avatar", ""),
+        "following_count": len(following),
+        "followers_count": len(followers),
+        "posts": len(user_feeds),
+        "feeds": [copy.deepcopy(f) for f in user_feeds],
+    }
+
+
+@app.post("/api/user/{user_id}/follow", tags=["用户"], summary="关注/取消关注")
+def toggle_follow(user_id: int, authorization: str = Header(None)):
+    """切换关注状态（需登录）"""
+    user = _require_user(authorization)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "请先登录"})
+    my_id = user["id"]
+    if my_id == user_id:
+        return JSONResponse(status_code=400, content={"error": "不能关注自己"})
+    target = USER_STORE.get_by_id(user_id)
+    if not target:
+        return JSONResponse(status_code=404, content={"error": "用户不存在"})
+    if my_id not in _FOLLOWS:
+        _FOLLOWS[my_id] = set()
+    if user_id in _FOLLOWS[my_id]:
+        _FOLLOWS[my_id].discard(user_id)
+        following = False
+    else:
+        _FOLLOWS[my_id].add(user_id)
+        following = True
+    _save_data()
+    return {"following": following}
+
+
+@app.get("/api/user/{user_id}/followers", tags=["用户"], summary="获取粉丝列表")
+def get_followers(user_id: int):
+    """返回指定用户的粉丝列表"""
+    followers_ids = set()
+    for uid, fset in _FOLLOWS.items():
+        if user_id in fset:
+            followers_ids.add(uid)
+    result = []
+    for uid in followers_ids:
+        u = USER_STORE.get_by_id(uid)
+        if u:
+            extras = _USER_EXTRAS.get(uid, {})
+            result.append({
+                "id": uid,
+                "username": u["username"],
+                "avatar": extras.get("avatar", ""),
+            })
+    return result
+
+
+@app.get("/api/user/{user_id}/following", tags=["用户"], summary="获取关注列表")
+def get_following(user_id: int):
+    """返回指定用户关注的列表"""
+    following_ids = _FOLLOWS.get(user_id, set())
+    result = []
+    for uid in following_ids:
+        u = USER_STORE.get_by_id(uid)
+        if u:
+            extras = _USER_EXTRAS.get(uid, {})
+            result.append({
+                "id": uid,
+                "username": u["username"],
+                "avatar": extras.get("avatar", ""),
+            })
+    return result
 
 
 # =====================================================================
@@ -1177,6 +1525,7 @@ def register(req: RegisterRequest):
     pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     user = USER_STORE.create(username, email, pw_hash)
     token = _create_token(user["id"], user["username"])
+    _save_data()
     return {"token": token, "user": user}
 
 
@@ -1194,6 +1543,7 @@ def login(req: LoginRequest):
 
     user = USER_STORE.get_by_id(row["id"])
     token = _create_token(user["id"], user["username"])
+    _save_data()
     return {"token": token, "user": user}
 
 
@@ -1260,21 +1610,26 @@ def reverse_geocode(lat: float, lon: float):
     except Exception:
         pass
 
-    # 1.5) 备用：Open-Meteo reverse geocoding（同一个数据源，更可靠）
+    # 1.5) 备用：Open-Meteo 反向地理编码（与天气数据同源，更可靠且准确）
+    # 先用专用 /v1/reverse 反查接口；不可用时回退到 /v1/search 坐标检索
     if not city_name:
-        try:
-            data = _http_get_with_retry(
-                "https://geocoding-api.open-meteo.com/v1/search",
-                {"latitude": lat, "longitude": lon, "count": 1, "language": "zh", "format": "json"},
-                attempts=2, timeout=8.0,
-            )
-            results = data.get("results") or []
-            if results:
-                r0 = results[0]
-                city_name = (r0.get("name") or "").strip()
-                district_name = (r0.get("admin3") or r0.get("admin2") or "").strip()
-        except Exception:
-            pass
+        for _url, _params in (
+            ("https://geocoding-api.open-meteo.com/v1/reverse",
+             {"latitude": lat, "longitude": lon, "language": "zh", "count": 1, "format": "json"}),
+            ("https://geocoding-api.open-meteo.com/v1/search",
+             {"latitude": lat, "longitude": lon, "count": 1, "language": "zh", "format": "json"}),
+        ):
+            try:
+                data = _http_get_with_retry(_url, _params, attempts=2, timeout=8.0)
+                results = data.get("results") or []
+                if results:
+                    r0 = results[0]
+                    city_name = (r0.get("name") or "").strip()
+                    if not district_name:
+                        district_name = (r0.get("admin3") or r0.get("admin2") or "").strip()
+                    break
+            except Exception:
+                continue
 
     # 2) 用本地城市表做最近匹配（Haversine），保证返回的一定是 data.json 里的城市
     data_path = os.path.join(_frontend_dir, "data.json")
@@ -1297,6 +1652,11 @@ def reverse_geocode(lat: float, lon: float):
                     return name[:-len(suf)]
             return name
         city_norm = _norm(city_name)
+        # 直辖市特殊处理：北京/上海/天津/重庆 — 若区县与城市同名则置空（用"全市"）
+        _MUNI = {"北京", "上海", "天津", "重庆"}
+        if city_norm in _MUNI:
+            if _norm(district_name) == city_norm or not _norm(district_name):
+                district_name = ""
         # 预先用 BigDataCloud 结果匹配城市名（处理"北京市"→"北京"等简称）
         matched = None
         for c in cities_list:
