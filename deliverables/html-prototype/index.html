@@ -1366,8 +1366,9 @@ function updateWeatherDisplay(w){
     show.forEach(function(r,i){
       var eng=getEngineByModel(r.model_code);
       var n=eng?eng.name:r.display_name||r.model_code;
-      var score=Math.round(r.score_daily_7d||0);
-      rphtml+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0'+(i<2?';border-bottom:1px solid var(--border)':'')+'"><div class="lb-rank lb-rank-'+(i+1)+'">'+(i+1)+'</div><span style="flex:1;font-size:13px;font-weight:600">'+n+'</span><span style="font-size:14px;font-weight:700;color:var(--accent)">'+score+'分</span></div>';
+      var score = (r.score_daily_7d === null || r.score_daily_7d === undefined) ? null : Math.round(r.score_daily_7d);
+      var scoreText = (score === null) ? '<span style="font-size:12px;font-weight:500;color:var(--muted)">待比对</span>' : '<span style="font-size:14px;font-weight:700;color:var(--accent)">'+score+'分</span>';
+      rphtml+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0'+(i<2?';border-bottom:1px solid var(--border)':'')+'"><div class="lb-rank lb-rank-'+(i+1)+'">'+(i+1)+'</div><span style="flex:1;font-size:13px;font-weight:600">'+n+'</span>'+scoreText+'</div>';
     });
   }else{
     var tops=ENGINE_SOURCES.slice(0,3);
@@ -1497,15 +1498,16 @@ function renderLeaderboard(){
       var eng=getEngineByModel(r.model_code);
       name=eng?eng.name:displayName;
       sub=eng?eng.sub:r.model_code;
-      score=Math.round(r.score_daily_7d||0);
-      var scoreTemp=Math.round(r.score_temp_7d||0);
-      var scorePrec=Math.round(r.score_precip_7d||0);
-      var samples=r.samples_7d||0;
-      var rcClass=rc<=3?'lb-rank-'+rc:'lb-rank-other';
+      score = (r.score_daily_7d === null || r.score_daily_7d === undefined) ? null : Math.round(r.score_daily_7d);
+      var scoreTemp = (r.score_temp_7d === null || r.score_temp_7d === undefined) ? '--' : Math.round(r.score_temp_7d);
+      var scorePrec = (r.score_precip_7d === null || r.score_precip_7d === undefined) ? '--' : Math.round(r.score_precip_7d);
+      var samples = r.samples_7d || 0;
+      var rcClass = rc<=3?'lb-rank-'+rc:'lb-rank-other';
+      var scoreDisplay = (score === null) ? '<div class="lb-score-val" style="color:var(--muted)">待比对</div>' : '<div class="lb-score-val">'+score+'</div><div style="font-size:10px;opacity:.7">综合得分</div>';
       html+='<div class="lb-item" onclick="selectSourceByModel(\''+r.model_code+'\')"><div class="lb-rank '+rcClass+'">'+rc+'</div>'
         +'<div class="lb-info"><div class="lb-name">'+name+' <span style="font-size:10px;opacity:.7;font-weight:500">'+sub+'</span></div>'
         +'<div class="lb-desc">温度 '+scoreTemp+'分 · 降水 '+scorePrec+'分 · '+samples+'天样本</div></div>'
-        +'<div class="lb-score"><div class="lb-score-val">'+score+'</div><div style="font-size:10px;opacity:.7">综合得分</div></div></div>';
+        +'<div class="lb-score">'+scoreDisplay+'</div></div>';
     }
   }else{
     // 无数据：按引擎默认顺序渲染（占位 0 分）

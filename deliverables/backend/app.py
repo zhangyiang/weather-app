@@ -26,6 +26,25 @@ from fastapi import FastAPI, Query, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+# 中国标准时区 UTC+8（所有评估城市均在中国，日期必须按北京时间计算）
+_CN_TZ = timezone(timedelta(hours=8))
+
+def _cn_now():
+    """返回当前北京时间 datetime（含 tzinfo）"""
+    return datetime.now(_CN_TZ)
+
+def _cn_today_str():
+    """返回北京时间的今天日期字符串 'YYYY-MM-DD'"""
+    return _cn_now().strftime("%Y-%m-%d")
+
+def _cn_tomorrow_str():
+    """返回北京时间的明天日期字符串"""
+    return (_cn_now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+def _cn_yesterday_str():
+    """返回北京时间的昨天日期字符串"""
+    return (_cn_now() - timedelta(days=1)).strftime("%Y-%m-%d")
 import uvicorn
 import httpx
 import pymysql
@@ -1155,7 +1174,7 @@ _DESC_MAP = {"sunny": "晴", "cloudy": "多云", "rainy": "小雨", "overcast": 
 
 def _build_user_prompt(city: str, district: str) -> str:
     """构造发送给大模型的用户提示词"""
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now_str = _cn_now().strftime("%Y-%m-%d %H:%M")
     return (
         f"城市：{city}\n"
         f"区域：{district}\n"
@@ -1532,7 +1551,7 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
         "real_data": True,
         "lat": lat,
         "lon": lon,
-        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "updated_at": _cn_now().strftime("%Y-%m-%d %H:%M"),
         # 数据源与所用预测模型（不同源对应不同真实模式，体现真实预报差异）
         "source": source or "default",
         "model": model or "best_match",
@@ -1567,7 +1586,7 @@ def get_weather(
 
     # 附带准确率排名（若数据不足则返回空 ranking 与 best_recommended=False）
     try:
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = _cn_today_str()
         rank = ACCURACY_STORE.rolling_7day_rank(city, district, today_str)
         best_model = rank.get("best_model")
         current_model = result.get("model") or "best_match"
@@ -2408,8 +2427,7 @@ def _score_day_for_city(city: str, district: str, record_date_str: str):
 
 def _run_daily_forecast_job():
     """每日 08:00 执行：对所有 _EVAL_CITIES 抓明日(T+1)的预测快照。"""
-    today_local = datetime.now().date()
-    target_date = (today_local + timedelta(days=1)).strftime("%Y-%m-%d")
+    target_date = _cn_tomorrow_str()
     print(f"[Cron 08:00] 开始抓取 T+1={target_date} 预测快照，城市数 {len(_EVAL_CITIES)}")
     out = []
     for c in _EVAL_CITIES:
@@ -2421,7 +2439,7 @@ def _run_daily_forecast_job():
 
 def _run_daily_actual_and_score_job():
     """每日 08:30 执行：抓昨日(T-1)实况真值，然后评分，产出每日得分。"""
-    yesterday = (datetime.now().date() - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = _cn_yesterday_str()
     print(f"[Cron 08:30] 开始抓取 T-1={yesterday} 实况真值并评分，城市数 {len(_EVAL_CITIES)}")
     actuals = []; scores = []
     for c in _EVAL_CITIES:
@@ -2436,8 +2454,7 @@ def _run_daily_actual_and_score_job():
 
 @app.post("/api/accuracy/run-forecast", tags=["准确率系统"], summary="手动：抓取 T+1 预测快照")
 def api_run_forecast(target_date: str = Query(None, description="目标日期 YYYY-MM-DD，留空 = 明日")):
-    today_local = datetime.now().date()
-    target_date = target_date or (today_local + timedelta(days=1)).strftime("%Y-%m-%d")
+    target_date = target_date or _cn_tomorrow_str()
     out = []
     for c in _EVAL_CITIES:
         out.append(_fetch_forecast_snapshot_for_city(c["city"], c["district"], target_date))
@@ -2464,7 +2481,7 @@ def api_run_score(record_date: str = Query(..., description="记录日期 YYYY-M
 
 @app.get("/api/accuracy/rank", tags=["准确率系统"], summary="查询某城市近7天准确率排名")
 def api_accuracy_rank(city: str = Query(...), district: str = Query(...)):
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = _cn_today_str()
     rank = ACCURACY_STORE.rolling_7day_rank(city, district, today_str)
     code_to_name = {
         "best_match": "智能综合",
@@ -2493,7 +2510,7 @@ def _cron_worker():
     last_actual_day = None
     while True:
         try:
-            now = datetime.now()
+            now = _cn_now()
             hh, mm, today = now.hour, now.minute, now.strftime("%Y-%m-%d")
             if hh == 8 and 0 <= mm <= 2 and today != last_forecast_day:
                 try:
@@ -2522,6 +2539,20 @@ def _start_cron_if_needed():
         _CRON_THREAD = threading.Thread(target=_cron_worker, daemon=True, name="accuracy-cron")
         _CRON_THREAD.start()
         print("  [Cron] 准确率后台定时线程已启动：每日 08:00 抓预测 / 08:30 抓实况+评分")
+        # 启动时立即跑一次：抓昨天的实况 + 评分 + 明天的预测
+        # 原因：Render 免费版休眠后重启可能错过 Cron 时间窗口
+        def _startup_bootstrap():
+            try:
+                time.sleep(5)  # 等 FastAPI 完全就绪
+                print("[Startup] 自动补跑：开始抓取昨日实况 + 评分")
+                _run_daily_actual_and_score_job()
+                print("[Startup] 自动补跑：开始抓取明日预测快照")
+                _run_daily_forecast_job()
+                print("[Startup] 自动补跑完成")
+            except Exception as e:
+                print(f"[Startup] 自动补跑失败（不影响运行）: {type(e).__name__}: {e}")
+        t = threading.Thread(target=_startup_bootstrap, daemon=True, name="startup-bootstrap")
+        t.start()
     except Exception as e:
         print(f"  [Cron] 启动失败: {e}")
 
