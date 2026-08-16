@@ -254,29 +254,33 @@ for _it in RANK_DATA["7d"]:
     SOURCE_DATA[_it["id"]]["rank"] = _it["rank"]
 
 # 各数据源对应的 Open-Meteo 真实预测模型
-# 每个数据源直接使用对应的真实数值模型，不加任何人工偏移。
-# 切换数据源时看到的就是不同模型的真实预报差异，有一说一。
+# 分层策略（严格遵循，确保与手机 APP 贴近）：
+#   1) 手机/商业/聚合类源（华为/苹果/小米/彩云/和风/墨迹/中国天气/天气通/Accu 等）
+#      → 统一使用 best_match（Open-Meteo 官方多模式融合 + 后处理），这是免费版中
+#         最接近真实手机内置天气 APP 展示策略的数据源，零人工偏移、有一说一。
+#   2) 纯数值模式源（ECMWF / GFS / ICON / CMA / GRAPES）
+#      → 使用各自的真实模型，方便对比不同数值模式的预报差异。
 _SOURCE_MODELS = {
-    # 数值模式（Open-Meteo 免费版直接支持、真实可用）
+    # —— 纯数值模式（真实模型，对比差异用）——
     "ecmwf": "ecmwf_ifs025",
     "icon": "icon_seamless",
     "grapes": "cma_grapes_global",
     "cma": "cma_grapes_global",
     "gfs": "gfs_seamless",
-    # 商业/手机类：每个分配不同的真实模型，数据直接来自该模型
-    "caiyun": "best_match",              # 彩云：多源融合
-    "pws": "gfs_seamless",               # PWS：GFS
-    "qweather": "icon_seamless",         # 和风：ICON
-    "moji": "cma_grapes_global",         # 墨迹：CMA
-    "weathercom": "ecmwf_ifs025",        # 天气通：ECMWF
-    "huawei": "gfs_seamless",            # 华为：GFS
-    "xiaomi": "icon_seamless",           # 小米：ICON
-    "apple": "ecmwf_ifs025",             # 苹果：ECMWF
-    # 官方/平台类
-    "weathercn": "cma_grapes_global",
-    "tct": "cma_grapes_global",
-    "accu": "gfs_seamless",
-    "goog": "gfs_seamless",
+    # —— 手机 / 商业 / 聚合类：统一 best_match，最贴近手机真实 APP ——
+    "caiyun": "best_match",              # 彩云
+    "pws": "best_match",                 # PWS
+    "qweather": "best_match",            # 和风天气
+    "moji": "best_match",                # 墨迹天气
+    "weathercom": "best_match",          # 天气通
+    "huawei": "best_match",              # 华为天气
+    "xiaomi": "best_match",              # 小米天气
+    "apple": "best_match",               # 苹果天气
+    # —— 官方 / 平台类 ——
+    "weathercn": "best_match",
+    "tct": "best_match",
+    "accu": "best_match",
+    "goog": "best_match",
 }
 
 NOTIFICATIONS = [
