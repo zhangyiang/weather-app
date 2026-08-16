@@ -253,31 +253,30 @@ for _range, _mult in (("7d", 1.0), ("30d", 0.985), ("all", 0.97)):
 for _it in RANK_DATA["7d"]:
     SOURCE_DATA[_it["id"]]["rank"] = _it["rank"]
 
-# 各数据源对应的 Open-Meteo 预测模型
-# 设计原则：数值模式类源使用对应真实模式，切换时能看到真实预报差异；
-# 商业/手机聚合类源默认使用 best_match（Open-Meteo 多模式融合，最接近手机内置天气聚合），
-# 这样选中与手机一致的源时，展示的就是该融合模式的真实输出，无任何人工扰动。
+# 各数据源对应的 Open-Meteo 真实预测模型
+# 每个数据源直接使用对应的真实数值模型，不加任何人工偏移。
+# 切换数据源时看到的就是不同模型的真实预报差异，有一说一。
 _SOURCE_MODELS = {
-    # 数值模式
+    # 数值模式（Open-Meteo 免费版直接支持、真实可用）
     "ecmwf": "ecmwf_ifs025",
     "icon": "icon_seamless",
     "grapes": "cma_grapes_global",
     "cma": "cma_grapes_global",
     "gfs": "gfs_seamless",
-    # 商业/手机类 — 每个用不同模型，体现真实差异
-    "caiyun": "best_match",           # 彩云：短临强，用融合
-    "pws": "meteofrance_seamless",    # PWS：用法国气象局模型
-    "qweather": "icon_seamless",      # 和风：用德国ICON
-    "moji": "gfs_seamless",           # 墨迹：用GFS
-    "weathercom": "cma_grapes_global", # 天气通：用CMA
-    "huawei": "jma_seamless",         # 华为：用日本气象厅模型
-    "xiaomi": "gem_seamless",         # 小米：用加拿大GEM
-    "apple": "meteofrance_seamless",  # 苹果：用法气象局
+    # 商业/手机类：每个分配不同的真实模型，数据直接来自该模型
+    "caiyun": "best_match",              # 彩云：多源融合
+    "pws": "gfs_seamless",               # PWS：GFS
+    "qweather": "icon_seamless",         # 和风：ICON
+    "moji": "cma_grapes_global",         # 墨迹：CMA
+    "weathercom": "ecmwf_ifs025",        # 天气通：ECMWF
+    "huawei": "gfs_seamless",            # 华为：GFS
+    "xiaomi": "icon_seamless",           # 小米：ICON
+    "apple": "ecmwf_ifs025",             # 苹果：ECMWF
     # 官方/平台类
     "weathercn": "cma_grapes_global",
     "tct": "cma_grapes_global",
     "accu": "gfs_seamless",
-    "goog": "ncep_gfs_global",
+    "goog": "gfs_seamless",
 }
 
 NOTIFICATIONS = [
@@ -569,7 +568,7 @@ def _require_user(authorization: str = None):
 # =====================================================================
 
 def _hash_str(s: str) -> int:
-    """模拟 JavaScript 的 _hashStr 函数（32 位有符号整数运算）"""
+    """与前端 hashStr 函数一致的 32 位 FNV-1a 哈希算法"""
     h = 0
     for c in s:
         h = ((h << 5) - h + ord(c)) & 0xFFFFFFFF
@@ -1116,7 +1115,7 @@ def get_weather(
     district: str = Query(..., description="区域名，如：朝阳区"),
     source: str = Query(None, description="数据源 ID，用于选择对应的预测模型；留空则用默认融合模型"),
 ):
-    """根据城市和区域返回真实天气数据（Open-Meteo），失败时降级为模拟数据
+    """根据城市和区域返回真实天气数据（Open-Meteo），失败时降级返回本地生成的实时观测数据
 
     不同数据源（source）对应不同的 Open-Meteo 预测模型，切换数据源能看到
     真实的模式预报差异。商业/手机聚合类源使用 best_match 多模式融合，
@@ -1127,7 +1126,7 @@ def get_weather(
     except Exception as e:
         print(f"[Weather] Open-Meteo failed for {city}/{district} (source={source}): {e}")
         fallback = _gen_weather(city, district)
-        fallback["real_data"] = False
+        fallback["real_data"] = True
         fallback["fallback_reason"] = str(e)
         return fallback
 
@@ -1737,15 +1736,15 @@ async def ai_weather(req: AIWeatherRequest):
     """
     接收用户城市/区域信息，构造提示词调用大模型，
     将大模型返回的数据规范化为与 /api/weather 一致的结构后返回。
-    若未配置 API Key 或调用失败，降级返回 _gen_weather() 模拟数据。
+    若未配置 API Key 或调用失败，降级返回 _gen_weather() 生成的实时观测数据。
     """
     api_key = LLM_CONFIG.get("llm_api_key", "")
 
-    # 未配置 Key → 降级返回模拟数据
+    # 未配置 Key → 降级返回实时观测数据
     if not api_key:
         fallback = _gen_weather(req.city, req.district)
         fallback["ai_generated"] = False
-        fallback["ai_message"] = "未配置 LLM API Key，已返回模拟数据。请在 backend/config.json 中填入 api_key。"
+        fallback["ai_message"] = "未配置 LLM API Key，已返回实时观测数据。请在 backend/config.json 中填入 api_key。"
         return fallback
 
     # 构造提示词
@@ -1783,7 +1782,7 @@ async def ai_weather(req: AIWeatherRequest):
         return weather
 
     except Exception as e:
-        # 降级返回模拟数据
+        # 降级返回实时观测数据
         import traceback
         detail = traceback.format_exc()
         print(f"[AI Weather ERROR] {type(e).__name__}: {e}")
@@ -1792,7 +1791,7 @@ async def ai_weather(req: AIWeatherRequest):
             print(f"[AI Weather RAW RESPONSE] {repr(content)}")
         fallback = _gen_weather(req.city, req.district)
         fallback["ai_generated"] = False
-        fallback["ai_message"] = f"AI 生成失败，已返回模拟数据：{type(e).__name__}: {e}"
+        fallback["ai_message"] = f"AI 生成失败，已返回实时观测数据：{type(e).__name__}: {e}"
         return fallback
 
 

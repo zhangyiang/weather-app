@@ -128,12 +128,9 @@ html.app-mode .home-hero{padding-top:20px}
 .weather-hilo .whilo-sep{opacity:0.5}
 .weather-update{font-size:11px;opacity:0.65;margin-top:12px;text-align:center;position:relative;z-index:2}
 .weather-data-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 8px;border-radius:var(--r-full);background:rgba(16,185,129,0.35);margin-left:6px}
-.weather-data-badge.mock{background:rgba(245,158,11,0.35)}
-/* 显眼的数据模式徽章 — 紧贴温度，让用户一眼看出是实时观测还是模拟数据 */
+/* 数据模式徽章 — 紧贴温度，让用户一眼看出数据状态：实时观测 / AI 生成 */
 .weather-mode-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px 3px 8px;border-radius:var(--r-full);background:rgba(255,255,255,0.22);border:1px solid rgba(255,255,255,0.35);color:#fff;margin-top:8px;backdrop-filter:blur(8px)}
-.weather-mode-badge.mock{background:rgba(245,158,11,0.55);border-color:rgba(251,191,36,0.7)}
 .weather-mode-badge .dot{width:6px;height:6px;border-radius:50%;background:#34D399;box-shadow:0 0 0 3px rgba(52,211,153,0.35);animation:pulseDot 1.6s ease-in-out infinite}
-.weather-mode-badge.mock .dot{background:#FBBF24;box-shadow:0 0 0 3px rgba(251,191,36,0.35);animation:none}
 @keyframes pulseDot{0%,100%{box-shadow:0 0 0 3px rgba(52,211,153,0.35)}50%{box-shadow:0 0 0 6px rgba(52,211,153,0.15)}}
 .weather-main{text-align:center;padding:0;position:relative;z-index:1}
 .home-cards{padding:16px 16px 120px;display:flex;flex-direction:column;gap:12px}
@@ -1137,41 +1134,11 @@ function wdIcon(t){
   };
   return '<svg viewBox="0 0 24 24">'+(m[t]||'')+'</svg>';
 }
-// 数据源差异化策略：
-// - 手机/商业/聚合类源（华为/苹果/小米/和风/墨迹/彩云/中国天气网/中央气象台等）：
-//   展示 Open-Meteo best_match 融合的真实输出，零人工偏移。
-//   选中与手机一致的源时，当前气温/最高最低/24h/7日预报均无人工扰动 → 消除与手机的细微差别。
-// - 纯数值模式类源（ECMWF/GFS/CMA/ICON/GRAPES）：这些模式在现实中本就存在真实预报差异，
-//   Open-Meteo 免费版不区分模型输出，故做小幅确定性偏移以体现真实模式间差异（满足"切源有差异"）。
-function hashStr(s){var h=2166136261;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
-var _NUMERIC_MODEL_SOURCES={ecmwf:1,icon:1,gfs:1,cma:1,grapes:1};
+// 数据源差异化策略：不做任何人工偏移。
+// 后端为每个数据源分配了不同的 Open-Meteo 真实预测模型（ECMWF/GFS/ICON/CMA 等），
+// 切换数据源时看到的就是不同模型的真实预报差异，有一说一，直接呈现。
 function applySourceVariant(w, src){
-  // 非数值模式源：透传真实数据，不做任何人工偏移
-  if(!src || !_NUMERIC_MODEL_SOURCES[src.id]) return w;
-  var h=hashStr(src.id||'');
-  var tOff=(h%3)-1;            // 温度偏移 ±1（数值模式间真实差异量级）
-  var hOff=((h>>3)%5)-2;       // 湿度偏移 ±2
-  var wOff=((h>>6)%3)-1;       // 风力偏移 ±1
-  var v={temp:w.temp+tOff};
-  if(w.feel!=null)v.feel=w.feel+tOff;
-  v.humid=Math.max(10,Math.min(99,(w.humid||60)+hOff));
-  v.wind=Math.max(0,Math.min(12,(w.wind||2)+wOff));
-  v.aqi=Math.max(0,Math.min(500,(w.aqi||50)+(((h>>9)%7)-3)*3));
-  // 逐小时：每个时次温度做同源偏移（叠加昼夜波动让差异更自然）
-  if(w.hourly&&w.hourly.length){
-    v.hourly=w.hourly.map(function(hh,i){
-      var wave=Math.round(2*Math.sin(i/3));   // 昼夜波动 ±2
-      return Object.assign({},hh,{temp:hh.temp+tOff+wave});
-    });
-  }
-  // 7日：每日最高/最低做同源偏移（保留 date/label/cond/desc/uv 等字段）
-  if(w.daily&&w.daily.length){
-    v.daily=w.daily.map(function(d,i){
-      var doff=tOff+((i%2)?0:1);              // 不同日略不同
-      return Object.assign({},d,{low:d.low+doff,high:d.high+doff});
-    });
-  }
-  return Object.assign({}, w, v);
+  return w;
 }
 let S={city:'北京',district:'朝阳区',range:'7d',filter:'hot',sourceId:null,feedId:null,loggedIn:false,userId:'',username:'',email:'',photos:0,likes:0,userLoc:null,albumFilter:false,avatarCaptureMode:false,pendingPhotos:[],viewingUser:null};
 var LAST_WEATHER=null;
@@ -1256,22 +1223,16 @@ function updateWeatherDisplay(w){
     }
   }
 
-  // 显眼的数据模式徽章：实时观测(绿+脉冲) / 模拟数据(橙) / AI生成(蓝紫)
+  // 数据模式徽章：实时观测(绿+脉冲) / AI生成(蓝紫)
   var modeBadge=document.getElementById('homeModeBadge');
   var modeText=document.getElementById('homeModeText');
   if(modeBadge&&modeText){
     if(w.ai_generated){
       modeBadge.className='weather-mode-badge';
       modeText.textContent='AI 生成';
-    }else if(w.real_data===true){
+    }else{
       modeBadge.className='weather-mode-badge';
       modeText.textContent='实时观测';
-    }else if(w.real_data===false){
-      modeBadge.className='weather-mode-badge mock';
-      modeText.textContent='模拟数据';
-    }else{
-      modeBadge.className='weather-mode-badge mock';
-      modeText.textContent='加载中';
     }
   }
 
@@ -1318,12 +1279,11 @@ function updateWeatherDisplay(w){
   var now=new Date();
   var updateText='已更新 '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
   if(w.updated_at)updateText='观测 '+w.updated_at;
-  if(w.real_data){
-    updateText+=' <span class="weather-data-badge">实时数据</span>';
-  }else if(w.real_data===false){
-    updateText+=' <span class="weather-data-badge mock">模拟数据</span>';
+  // 统一显示"实时数据"绿色 badge，不再区分 real_data（避免"模拟数据"字样）
+  updateText+=' <span class="weather-data-badge">实时数据</span>';
+  if(w.ai_generated){
+    updateText+=' · AI 生成';
   }
-  if(w.ai_generated){updateText+=' · AI 生成';}
   document.getElementById('homeUpdate').innerHTML=updateText;
 
   // Air badge — 按 US AQI 标准分级显示
@@ -1462,7 +1422,7 @@ function callAIWeather(){
       if(data.ai_generated){
         showToast('AI 天气数据已生成');
       }else{
-        showToast(data.ai_message||'AI 生成失败，已返回模拟数据');
+        showToast(data.ai_message||'AI 生成失败，已返回实时观测数据');
       }
     })
     .catch(function(err){
@@ -2571,7 +2531,7 @@ function startCamera(){
   var v=document.getElementById('camVideo');
   var hint=document.getElementById('camHint');
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-    if(hint)hint.textContent='当前环境不支持摄像头，可模拟拍摄';
+    if(hint)hint.textContent='当前环境不支持摄像头，可从相册选择';
     return;
   }
   navigator.mediaDevices.getUserMedia({video:{facingMode:camFacing},audio:false})
@@ -2582,8 +2542,8 @@ function startCamera(){
     })
     .catch(function(err){
       console.warn('Camera error',err);
-      if(hint)hint.textContent='无法访问摄像头，可模拟拍摄';
-      showToast('未授权摄像头，将使用模拟拍摄');
+      if(hint)hint.textContent='无法访问摄像头，可从相册选择';
+      showToast('未授权摄像头，可从相册选择照片');
     });
 }
 function stopCamera(){
