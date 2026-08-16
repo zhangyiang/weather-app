@@ -282,7 +282,7 @@ _ENGINE_MODELS = {
     "microsoft_google": "gfs_seamless",          # 微软/Google天气底座：GFS 美国全球
     "windy_dwd":        "icon_seamless",         # Windy/德国ICON底座：DWD ICON
     "jma_eastasia":     "jma_seamless",          # 日本气象厅/东亚底座：JMA
-    "cma_china":        "cma_gfs",               # 中国气象局底座：CMA GFS
+    "cma_china":        "cma_grapes_global",      # 中国气象局底座：CMA GFS（Open-Meteo 正确模型名为 cma_grapes_global）
     "meteo_france":     "meteofrance_seamless",  # 法国高精底座：Météo-France
 }
 
@@ -588,7 +588,7 @@ _SCORED_MODELS = [
     "gfs_seamless",
     "icon_seamless",
     "jma_seamless",
-    "cma_gfs",
+    "cma_grapes_global",
     "meteofrance_seamless",
 ]
 
@@ -1354,6 +1354,40 @@ def _wind_ms_to_level(speed_ms: float) -> int:
     return 12
 
 
+# =====================================================================
+# 天气接口短期内存缓存
+# 避免每次刷新/重复进入都实时打 Open-Meteo（首拉 3s -> 缓存命中 0.2s）。
+# 天气变化慢，10 分钟 TTL 足够；排行榜为每日离线回填，不影响新鲜度。
+# =====================================================================
+_WEATHER_CACHE = {}
+_WEATHER_CACHE_TTL = 600  # 秒
+
+def _weather_cache_get(key):
+    entry = _WEATHER_CACHE.get(key)
+    if not entry:
+        return None
+    ts, payload = entry
+    if time.time() - ts > _WEATHER_CACHE_TTL:
+        _WEATHER_CACHE.pop(key, None)
+        return None
+    return payload
+
+def _weather_cache_set(key, payload):
+    _WEATHER_CACHE[key] = (time.time(), payload)
+
+def _safe_round(val, default=0, ndigits=0):
+    """None/非数值安全取整：Open-Meteo 部分数值模式（如 ecmwf/icon/jma/cma/meteofrance）
+    会对 visibility 等派生字段返回 null，直接 round(None) 会抛 TypeError。
+    ndigits=0 时返回 int，保持原 "28°C" 整数显示；否则返回对应精度 float。"""
+    try:
+        if val is None:
+            return default
+        r = round(float(val), ndigits)
+        return int(r) if ndigits == 0 else r
+    except (TypeError, ValueError):
+        return default
+
+
 def _uv_to_label(uv: float) -> str:
     if uv <= 2:
         return "弱"
@@ -1365,6 +1399,30 @@ def _uv_to_label(uv: float) -> str:
         return "很强"
     return "极强"
 
+
+# 中国主要城市中心坐标兜底表：当 Open-Meteo geocoding API 不可达/限流时，
+# 用内置坐标继续服务，避免单城市定位失败拖垮整个天气/准确率系统。
+_GEO_FALLBACK = {
+    "北京": (39.9042, 116.4074), "上海": (31.2304, 121.4737),
+    "广州": (23.1291, 113.2644), "深圳": (22.5431, 114.0579),
+    "成都": (30.5728, 104.0668), "杭州": (30.2741, 120.1551),
+    "武汉": (30.5928, 114.3055), "南京": (32.0603, 118.7969),
+    "西安": (34.3416, 108.9398), "重庆": (29.5630, 106.5516),
+    "苏州": (31.2989, 120.5853), "天津": (39.3434, 117.3616),
+    "长沙": (28.2282, 112.9388), "郑州": (34.7466, 113.6253),
+    "青岛": (36.0671, 120.3826), "厦门": (24.4798, 118.0894),
+    "宁波": (29.8683, 121.5440), "无锡": (31.4912, 120.3119),
+    "福州": (26.0745, 119.2965), "济南": (36.6512, 117.1201),
+    "合肥": (31.8206, 117.2272), "南昌": (28.6829, 115.8579),
+    "昆明": (24.8801, 102.8329), "贵阳": (26.6470, 106.6302),
+    "哈尔滨": (45.8038, 126.5350), "沈阳": (41.8057, 123.4315),
+    "长春": (43.8171, 125.3235), "石家庄": (38.0428, 114.5149),
+    "太原": (37.8706, 112.5489), "兰州": (36.0611, 103.8343),
+    "南宁": (22.8170, 108.3665), "海口": (20.0444, 110.1989),
+    "呼和浩特": (40.8424, 111.7490), "银川": (38.4872, 106.2309),
+    "西宁": (36.6171, 101.7782), "乌鲁木齐": (43.8256, 87.6168),
+    "拉萨": (29.6520, 91.1721),
+}
 
 def _geocode(city: str, district: str) -> tuple[float, float, str]:
     """城市+区域 → (纬度, 经度, 时区)。
@@ -1398,6 +1456,13 @@ def _geocode(city: str, district: str) -> tuple[float, float, str]:
             break
 
     if not results:
+        # geocoding API 不可达/限流时，回退内置城市坐标，保证系统不崩
+        fb = _GEO_FALLBACK.get(city)
+        if fb:
+            lat, lon = fb
+            _GEO_CACHE[key] = (lat, lon, "Asia/Shanghai")
+            print(f"[Geo] {city}{district} geocoding 失败，回退内置坐标 {lat},{lon}")
+            return (lat, lon, "Asia/Shanghai")
         raise ValueError(f"无法定位：{city} {district}")
 
     best = results[0]
@@ -1457,6 +1522,7 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
                 "https://api.open-meteo.com/v1/forecast",
                 weather_params, attempts=3, timeout=15.0,
             )
+            model = None  # 已回退到融合模式，result 如实反映所用模型
         else:
             raise
     # AQI 非关键：失败时静默用默认值 50
@@ -1473,14 +1539,14 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
     aqi = max(0, min(500, aqi))
 
     cur = w_data["current"]
-    wcode = int(cur.get("weather_code", 0))
+    wcode = int(_safe_round(cur.get("weather_code"), 0))
     cond = _wmo_to_cond(wcode)
-    temp = round(cur.get("temperature_2m", 20))
-    feel = round(cur.get("apparent_temperature", temp))
-    humid = int(cur.get("relative_humidity_2m", 60))
-    wind = _wind_ms_to_level(cur.get("wind_speed_10m", 0))
-    press = int(cur.get("surface_pressure", 1013))
-    vis_km = round((cur.get("visibility") or 10000) / 1000, 1)
+    temp = _safe_round(cur.get("temperature_2m"), 20)
+    feel = _safe_round(cur.get("apparent_temperature"), temp)
+    humid = int(_safe_round(cur.get("relative_humidity_2m"), 60))
+    wind = _wind_ms_to_level(_safe_round(cur.get("wind_speed_10m"), 0))
+    press = int(_safe_round(cur.get("surface_pressure"), 1013))
+    vis_km = _safe_round(cur.get("visibility"), 10.0, 1)
 
     hourly = []
     h_times = w_data.get("hourly", {}).get("time", [])
@@ -1504,10 +1570,10 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
             start_idx = i
             break
     for i in range(start_idx, min(start_idx + 24, len(h_times))):
-        hc = int(h_codes[i]) if i < len(h_codes) else wcode
+        hc = int(_safe_round(h_codes[i], 0)) if i < len(h_codes) else wcode
         hourly.append({
             "time": h_times[i][11:16],
-            "temp": round(h_temps[i]),
+            "temp": _safe_round(h_temps[i]),
             "cond": _wmo_to_cond(hc),
             "desc": _wmo_to_desc(hc),
         })
@@ -1520,17 +1586,17 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
     d_uv = w_data.get("daily", {}).get("uv_index_max", [])
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     for i in range(min(7, len(d_times))):
-        dc = int(d_codes[i]) if i < len(d_codes) else wcode
+        dc = int(_safe_round(d_codes[i], 0)) if i < len(d_codes) else wcode
         dt = datetime.strptime(d_times[i], "%Y-%m-%d")
         label = "今天" if i == 0 else ("明天" if i == 1 else ("后天" if i == 2 else weekday_names[dt.weekday()]))
         daily.append({
             "date": d_times[i],
             "label": label,
-            "high": round(d_max[i]),
-            "low": round(d_min[i]),
+            "high": _safe_round(d_max[i]),
+            "low": _safe_round(d_min[i]),
             "cond": _wmo_to_cond(dc),
             "desc": _wmo_to_desc(dc),
-            "uv": round(d_uv[i], 1) if i < len(d_uv) else 0,
+            "uv": _safe_round(d_uv[i], 0, 1) if i < len(d_uv) else 0,
         })
 
     uv_today = daily[0]["uv"] if daily else 0
@@ -1576,12 +1642,16 @@ def get_weather(
       - best_recommended_model / best_recommended_score / best_recommended: 是否该模型是近7天最优
       - ranking：6 个真实数值模型近 7 天的综合得分排名（可画柱状图/折线图）
     """
+    _cache_key = f"{city}|{district}|{source}"
+    _cached = _weather_cache_get(_cache_key)
+    if _cached is not None:
+        return _cached
     try:
         result = _fetch_real_weather(city, district, source)
     except Exception as e:
         print(f"[Weather] Open-Meteo failed for {city}/{district} (source={source}): {e}")
         result = _gen_weather(city, district)
-        result["real_data"] = True
+        result["real_data"] = False
         result["fallback_reason"] = str(e)
 
     # 附带准确率排名（若数据不足则返回空 ranking 与 best_recommended=False）
@@ -1619,6 +1689,7 @@ def get_weather(
         accuracy = {"best_recommended": False, "ranking": []}
 
     result["accuracy"] = accuracy
+    _weather_cache_set(_cache_key, result)
     return result
 
 
@@ -2288,11 +2359,11 @@ async def ai_weather(req: AIWeatherRequest):
 
 # =====================================================================
 # 静态文件服务（前端页面）
-# 所有 /api/* 路由优先匹配，其余请求由 StaticFiles 处理
+# 注意：StaticFiles 的 "/" 挂载必须放在【所有 API 路由之后】，否则会按注册顺序
+# 吞掉 /api/accuracy/* 等后注册的路由（GET→404 / POST→405）。实际挂载见文件末尾。
 # =====================================================================
 
 _frontend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "html-prototype")
-app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
 
 
 # =====================================================================
@@ -2310,26 +2381,52 @@ _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 
 def _fetch_forecast_snapshot_for_city(city: str, district: str, target_date_str: str):
-    """对单一城市+T+1日期，循环 _SCORED_MODELS，调用 Open-Meteo 拿预报数据并入库。
+    """对单一城市+T日期，循环 _SCORED_MODELS，调用 Open-Meteo 拿预报数据并入库。
     强制 timezone=auto + temperature_unit=celsius，确保本地日期对齐。
+
+    【关键修复：数据空洞】
+      目标日期为【未来】时用 forecast 预报 API（只能向前预报）；
+      目标日期为【今天或过去】时用 archive 历史 API（同样支持 models 参数）。
+      之前无论何种日期都只用 forecast API，导致对“昨天/历史”评分时
+      get_forecasts 返回空 -> compute_daily_score 一次都不执行 ->
+      daily_scores 无记录 -> rolling_7day_rank 全为 null -> 前端显示成 0 分。
     """
     lat, lon, tz = _geocode(city, district)
+    today_str = _cn_today_str()
+    use_archive = target_date_str <= today_str
     results = []
     for model_code in _SCORED_MODELS:
         try:
             fd = 4 if model_code == "meteofrance_seamless" else 7
-            data = _http_get_with_retry(
-                _FORECAST_URL,
-                {
-                    "latitude": lat, "longitude": lon,
-                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
-                    "timezone": "auto",              # 强制本地时区
-                    "temperature_unit": "celsius",    # 强制摄氏度
-                    "forecast_days": fd,
-                    "models": model_code,
-                },
-                attempts=2, timeout=15.0,
-            )
+            if use_archive:
+                # 历史/今天：archive API 支持 models 参数，可取到该模型当日的预测值用于评分
+                data = _http_get_with_retry(
+                    _ARCHIVE_URL,
+                    {
+                        "latitude": lat, "longitude": lon,
+                        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                        "timezone": "auto",              # 强制本地时区
+                        "temperature_unit": "celsius",    # 强制摄氏度
+                        "models": model_code,
+                        "start_date": target_date_str,
+                        "end_date": target_date_str,
+                    },
+                    attempts=2, timeout=20.0,
+                )
+            else:
+                # 未来：forecast API 向前预报
+                data = _http_get_with_retry(
+                    _FORECAST_URL,
+                    {
+                        "latitude": lat, "longitude": lon,
+                        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                        "timezone": "auto",              # 强制本地时区
+                        "temperature_unit": "celsius",    # 强制摄氏度
+                        "forecast_days": fd,
+                        "models": model_code,
+                    },
+                    attempts=2, timeout=15.0,
+                )
             daily = data.get("daily") or {}
             dates = daily.get("time") or []
             mx = daily.get("temperature_2m_max") or []
@@ -2340,12 +2437,12 @@ def _fetch_forecast_snapshot_for_city(city: str, district: str, target_date_str:
                 if str(d) == target_date_str:
                     idx = i; break
             if idx is None:
-                results.append({"model": model_code, "ok": False, "err": f"target date {target_date_str} not in forecast range"})
+                results.append({"model": model_code, "ok": False, "err": f"target date {target_date_str} not in range"})
                 continue
             pred_max = mx[idx] if idx < len(mx) else None
             pred_min = mn[idx] if idx < len(mn) else None
             pred_precip = pr[idx] if idx < len(pr) else 0.0
-            # 合法性检查：过滤 NaN / 极端离群值
+            # 合法性检查：过滤 NaN / 极端离群值（如 meteofrance_seamless 在某坐标返回 NaN/离群）
             if pred_max is not None and (isinstance(pred_max, float) and math.isnan(pred_max)):
                 pred_max = None
             if pred_min is not None and (isinstance(pred_min, float) and math.isnan(pred_min)):
@@ -2363,7 +2460,8 @@ def _fetch_forecast_snapshot_for_city(city: str, district: str, target_date_str:
             results.append({"model": model_code, "ok": True, "max": pred_max, "min": pred_min, "precip": pred_precip})
         except Exception as e:
             results.append({"model": model_code, "ok": False, "err": str(e)})
-    return {"city": city, "district": district, "target_date": target_date_str, "results": results}
+    return {"city": city, "district": district, "target_date": target_date_str,
+            "source": "archive" if use_archive else "forecast", "results": results}
 
 
 def _fetch_actual_record_for_city(city: str, district: str, record_date_str: str):
@@ -2431,7 +2529,10 @@ def _run_daily_forecast_job():
     print(f"[Cron 08:00] 开始抓取 T+1={target_date} 预测快照，城市数 {len(_EVAL_CITIES)}")
     out = []
     for c in _EVAL_CITIES:
-        out.append(_fetch_forecast_snapshot_for_city(c["city"], c["district"], target_date))
+        try:
+            out.append(_fetch_forecast_snapshot_for_city(c["city"], c["district"], target_date))
+        except Exception as e:
+            print(f"[Cron 08:00] 跳过 {c['city']}{c['district']} 预报抓取失败: {type(e).__name__}: {e}")
         time.sleep(0.3)
     print(f"[Cron 08:00] 预测快照完成 {len(out)} 城市")
     return {"job": "forecast", "target_date": target_date, "cities": out}
@@ -2443,11 +2544,56 @@ def _run_daily_actual_and_score_job():
     print(f"[Cron 08:30] 开始抓取 T-1={yesterday} 实况真值并评分，城市数 {len(_EVAL_CITIES)}")
     actuals = []; scores = []
     for c in _EVAL_CITIES:
-        actuals.append(_fetch_actual_record_for_city(c["city"], c["district"], yesterday))
+        try:
+            actuals.append(_fetch_actual_record_for_city(c["city"], c["district"], yesterday))
+        except Exception as e:
+            print(f"[Cron 08:30] 跳过 {c['city']}{c['district']} 实况抓取失败: {type(e).__name__}: {e}")
         time.sleep(0.3)
-        scores.append(_score_day_for_city(c["city"], c["district"], yesterday))
+        try:
+            scores.append(_score_day_for_city(c["city"], c["district"], yesterday))
+        except Exception as e:
+            print(f"[Cron 08:30] 跳过 {c['city']}{c['district']} 评分失败: {type(e).__name__}: {e}")
     print(f"[Cron 08:30] 实况 + 评分完成 {len(actuals)} 城市")
     return {"job": "actual+score", "record_date": yesterday, "actuals": actuals, "scores": scores}
+
+
+def _backfill_accuracy(days: int = 7):
+    """回填最近 days 天的「预报快照(archive) + 实况(archive) + 评分」，使 7 日排行榜有真实数据。
+    幂等：upsert 已存在则覆盖；某日实况未就绪时该日评分标记 pending（不计 0 分）。
+    过去/今天的目标日期由 _fetch_forecast_snapshot_for_city 自动走 archive API（支持 models）。
+    """
+    today = datetime.strptime(_cn_today_str(), "%Y-%m-%d")
+    summary = []
+    for back in range(days - 1, -1, -1):  # 从最早一天到今天
+        rec = (today - timedelta(days=back)).strftime("%Y-%m-%d")
+        forecasts_ok = 0
+        for c in _EVAL_CITIES:
+            try:
+                fr = _fetch_forecast_snapshot_for_city(c["city"], c["district"], rec)
+                forecasts_ok += sum(1 for r in fr.get("results", []) if r.get("ok"))
+            except Exception as e:
+                print(f"[Backfill] 跳过 {c['city']}{c['district']} 预报抓取失败: {type(e).__name__}: {e}")
+            time.sleep(0.2)
+        actuals_ok = 0
+        for c in _EVAL_CITIES:
+            try:
+                ar = _fetch_actual_record_for_city(c["city"], c["district"], rec)
+                if ar.get("ok"):
+                    actuals_ok += 1
+            except Exception as e:
+                print(f"[Backfill] 跳过 {c['city']}{c['district']} 实况抓取失败: {type(e).__name__}: {e}")
+            time.sleep(0.2)
+        scored = 0
+        for c in _EVAL_CITIES:
+            try:
+                sr = _score_day_for_city(c["city"], c["district"], rec)
+                scored += sr.get("scored", 0)
+            except Exception as e:
+                print(f"[Backfill] 跳过 {c['city']}{c['district']} 评分失败: {type(e).__name__}: {e}")
+        summary.append({"date": rec, "forecasts_ok": forecasts_ok,
+                        "actuals_ok": actuals_ok, "scored": scored})
+        print(f"[Backfill] {rec}: forecast={forecasts_ok} actual={actuals_ok} scored={scored}")
+    return {"backfill_days": days, "summary": summary}
 
 
 # ---- 手动管理 API（POST，无鉴权；内部使用）----
@@ -2477,6 +2623,11 @@ def api_run_score(record_date: str = Query(..., description="记录日期 YYYY-M
     for c in _EVAL_CITIES:
         out.append(_score_day_for_city(c["city"], c["district"], record_date))
     return {"record_date": record_date, "scores": out}
+
+
+@app.post("/api/accuracy/backfill", tags=["准确率系统"], summary="手动：回填最近 N 天准确率数据(预报+实况+评分)")
+def api_backfill(days: int = Query(7, description="回填天数，默认 7；用于修复全新部署后排行榜全 0 分")):
+    return _backfill_accuracy(days=days)
 
 
 @app.get("/api/accuracy/rank", tags=["准确率系统"], summary="查询某城市近7天准确率排名")
@@ -2544,9 +2695,9 @@ def _start_cron_if_needed():
         def _startup_bootstrap():
             try:
                 time.sleep(5)  # 等 FastAPI 完全就绪
-                print("[Startup] 自动补跑：开始抓取昨日实况 + 评分")
-                _run_daily_actual_and_score_job()
-                print("[Startup] 自动补跑：开始抓取明日预测快照")
+                print("[Startup] 自动补跑：回填最近 7 天准确率数据（预报快照+实况+评分），修复全新部署后排行榜全 0 分")
+                _backfill_accuracy(7)
+                print("[Startup] 自动补跑：抓取明日预测快照")
                 _run_daily_forecast_job()
                 print("[Startup] 自动补跑完成")
             except Exception as e:
@@ -2555,6 +2706,14 @@ def _start_cron_if_needed():
         t.start()
     except Exception as e:
         print(f"  [Cron] 启动失败: {e}")
+
+
+# =====================================================================
+# 静态文件服务（前端页面）—— 必须放在【所有 API 路由之后】挂载
+# 原因：Starlette 按路由注册顺序匹配，"/" 的 StaticFiles 是通配挂载，
+# 若放在 /api/accuracy/* 等路由之前注册，会拦截这些请求（GET→404 / POST→405）。
+# =====================================================================
+app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
 
 
 # =====================================================================
