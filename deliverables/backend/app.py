@@ -19,6 +19,7 @@ import json
 import hashlib
 import os
 import re
+import math
 import threading
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Query, Header
@@ -865,10 +866,14 @@ class AccuracyStore:
         ranking = []
         for m in _SCORED_MODELS:
             data = per_model.get(m, {})
-            n = len(data.get("dailys", []))
-            score = round(sum(data["dailys"]) / n, 2) if n else 0.0
-            s_temp = round(sum(data["temps"]) / len(data["temps"]), 2) if data.get("temps") else 0.0
-            s_prec = round(sum(data["precips"]) / len(data["precips"]), 2) if data.get("precips") else 0.0
+            # 只统计非 null 的得分（排除"待比对"状态）
+            valid_dailys = [v for v in data.get("dailys", []) if v is not None]
+            valid_temps = [v for v in data.get("temps", []) if v is not None]
+            valid_precips = [v for v in data.get("precips", []) if v is not None]
+            n = len(valid_dailys)
+            score = round(sum(valid_dailys) / n, 2) if n else None
+            s_temp = round(sum(valid_temps) / len(valid_temps), 2) if valid_temps else None
+            s_prec = round(sum(valid_precips) / len(valid_precips), 2) if valid_precips else None
             ranking.append({
                 "model_code": m,
                 "score_daily_7d": score,
@@ -877,7 +882,8 @@ class AccuracyStore:
                 "samples_7d": n,
             })
 
-        ranking.sort(key=lambda r: r["score_daily_7d"], reverse=True)
+        # 排序：有得分的按分数降序；null 的排最后
+        ranking.sort(key=lambda r: (r["score_daily_7d"] is not None, r["score_daily_7d"] or 0), reverse=True)
         for i, r in enumerate(ranking):
             r["rank"] = i + 1
         best = ranking[0] if ranking else None
@@ -885,8 +891,8 @@ class AccuracyStore:
             "city": city, "district": district,
             "period": f"{s} ~ {e}",
             "ranking": ranking,
-            "best_model": best["model_code"] if best else None,
-            "best_score": best["score_daily_7d"] if best else 0.0,
+            "best_model": best["model_code"] if best and best["score_daily_7d"] is not None else None,
+            "best_score": best["score_daily_7d"] if best and best["score_daily_7d"] is not None else 0.0,
         }
 
 
@@ -899,41 +905,68 @@ ACCURACY_STORE = AccuracyStore(APP_CONFIG["mysql"])
 
 def compute_daily_score(pred_row, actual_row) -> dict:
     """
-    根据：
-    Score_temp = max(0, 100 - E_temp * 15), E_temp = (|max差|+|min差|)/2
-    Score_precip = 命中100 / 未命中20（相差>50%额外减）
-    Score_daily = 0.6*St + 0.4*Sp
-    """
-    E_temp = 0
-    missing = 0
-    if (pred_row.get("pred_temp_max") is not None and actual_row.get("actual_temp_max") is not None
-            and pred_row.get("pred_temp_min") is not None and actual_row.get("actual_temp_min") is not None):
-        diff_max = abs(float(pred_row["pred_temp_max"]) - float(actual_row["actual_temp_max"]))
-        diff_min = abs(float(pred_row["pred_temp_min"]) - float(actual_row["actual_temp_min"]))
-        E_temp = (diff_max + diff_min) / 2.0
-    else:
-        missing += 1
-    Score_temp = max(0.0, 100.0 - E_temp * 15.0)
+    温度评分（平滑扣分）：
+      E_temp = (|max差| + |min差|) / 2
+      Score_temp = max(0, 100 - E_temp * 8)    # 1℃扣8分，5℃扣40分仍有60
+    降水评分（保持原逻辑）：
+      命中(均无雨/均有雨) = 100；未命中 = 20；量级差>2倍再扣15
+    当日综合 = Score_temp * 0.6 + Score_precip * 0.4
 
-    precip_pred = float(pred_row.get("pred_precip_sum") or 0.0)
-    precip_actual = float(actual_row.get("actual_precip_sum") or 0.0)
+    若任一方数据缺失，对应得分返回 null（待比对状态），不强行算 0。
+    """
+    # ---- 温度 ----
+    p_max = pred_row.get("pred_temp_max")
+    p_min = pred_row.get("pred_temp_min")
+    a_max = actual_row.get("actual_temp_max")
+    a_min = actual_row.get("actual_temp_min")
+
+    # NaN 检查
+    for v_name, v in [("p_max", p_max), ("p_min", p_min), ("a_max", a_max), ("a_min", a_min)]:
+        if v is not None and isinstance(v, float) and math.isnan(v):
+            if v_name.startswith("p"): pred_row[v_name] = None
+            else: actual_row[v_name] = None
+
+    p_max = pred_row.get("pred_temp_max")
+    p_min = pred_row.get("pred_temp_min")
+    a_max = actual_row.get("actual_temp_max")
+    a_min = actual_row.get("actual_temp_min")
+
+    if p_max is not None and p_min is not None and a_max is not None and a_min is not None:
+        diff_max = abs(float(p_max) - float(a_max))
+        diff_min = abs(float(p_min) - float(a_min))
+        E_temp = (diff_max + diff_min) / 2.0
+        Score_temp = max(0.0, 100.0 - E_temp * 8.0)
+    else:
+        Score_temp = None  # 待比对
+
+    # ---- 降水 ----
+    precip_pred_raw = pred_row.get("pred_precip_sum")
+    precip_actual_raw = actual_row.get("actual_precip_sum")
+
+    precip_pred = float(precip_pred_raw) if precip_pred_raw is not None and not (isinstance(precip_pred_raw, float) and math.isnan(precip_pred_raw)) else 0.0
+    precip_actual = float(precip_actual_raw) if precip_actual_raw is not None and not (isinstance(precip_actual_raw, float) and math.isnan(precip_actual_raw)) else 0.0
+
     pred_rain = precip_pred >= 0.5
     actual_rain = precip_actual >= 0.5
     if pred_rain == actual_rain:
         Score_precip = 100.0
     else:
         Score_precip = 20.0
-        # 量级差 >50% 额外扣分
         if precip_pred > 0 and precip_actual > 0:
             ratio = max(precip_pred, precip_actual) / max(min(precip_pred, precip_actual), 1e-6)
             if ratio > 2.0:
                 Score_precip = max(0.0, Score_precip - 15.0)
 
-    Score_daily = Score_temp * 0.6 + Score_precip * 0.4
+    # ---- 综合 ----
+    if Score_temp is not None:
+        Score_daily = Score_temp * 0.6 + Score_precip * 0.4
+    else:
+        Score_daily = None  # 温度缺失时整体标记待比对
+
     return {
-        "score_temp": round(Score_temp, 2),
+        "score_temp": round(Score_temp, 2) if Score_temp is not None else None,
         "score_precip": round(Score_precip, 2),
-        "score_daily": round(Score_daily, 2),
+        "score_daily": round(Score_daily, 2) if Score_daily is not None else None,
     }
 
 
@@ -1382,7 +1415,8 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
         "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,surface_pressure,visibility,is_day",
         "hourly": "temperature_2m,weather_code",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,uv_index_max",
-        "timezone": tz,
+        "timezone": "auto",           # 强制 auto：按坐标本地时间返回，避免 UTC 比对偏差
+        "temperature_unit": "celsius", # 强制摄氏度
         "forecast_days": forecast_days,
     }
     # 指定预测模型：不同数据源使用不同数值模式，体现真实预报差异
@@ -2257,19 +2291,21 @@ _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 
 def _fetch_forecast_snapshot_for_city(city: str, district: str, target_date_str: str):
-    """对单一城市+T+1日期，循环 _SCORED_MODELS，调用 Open-Meteo 拿预报数据并入库。"""
+    """对单一城市+T+1日期，循环 _SCORED_MODELS，调用 Open-Meteo 拿预报数据并入库。
+    强制 timezone=auto + temperature_unit=celsius，确保本地日期对齐。
+    """
     lat, lon, tz = _geocode(city, district)
     results = []
     for model_code in _SCORED_MODELS:
         try:
-            # meteofrance 只有 4 天；其余 7 天
             fd = 4 if model_code == "meteofrance_seamless" else 7
             data = _http_get_with_retry(
                 _FORECAST_URL,
                 {
                     "latitude": lat, "longitude": lon,
                     "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
-                    "timezone": tz,
+                    "timezone": "auto",              # 强制本地时区
+                    "temperature_unit": "celsius",    # 强制摄氏度
                     "forecast_days": fd,
                     "models": model_code,
                 },
@@ -2285,10 +2321,22 @@ def _fetch_forecast_snapshot_for_city(city: str, district: str, target_date_str:
                 if str(d) == target_date_str:
                     idx = i; break
             if idx is None:
+                results.append({"model": model_code, "ok": False, "err": f"target date {target_date_str} not in forecast range"})
                 continue
             pred_max = mx[idx] if idx < len(mx) else None
             pred_min = mn[idx] if idx < len(mn) else None
             pred_precip = pr[idx] if idx < len(pr) else 0.0
+            # 合法性检查：过滤 NaN / 极端离群值
+            if pred_max is not None and (isinstance(pred_max, float) and math.isnan(pred_max)):
+                pred_max = None
+            if pred_min is not None and (isinstance(pred_min, float) and math.isnan(pred_min)):
+                pred_min = None
+            if pred_max is not None and (pred_max < -80 or pred_max > 70):
+                results.append({"model": model_code, "ok": False, "err": f"extreme temp_max={pred_max}, skipped"})
+                continue
+            if pred_min is not None and (pred_min < -80 or pred_min > 70):
+                results.append({"model": model_code, "ok": False, "err": f"extreme temp_min={pred_min}, skipped"})
+                continue
             ACCURACY_STORE.upsert_forecast(
                 city, district, lat, lon, model_code, target_date_str,
                 pred_max, pred_min, pred_precip,
@@ -2300,7 +2348,9 @@ def _fetch_forecast_snapshot_for_city(city: str, district: str, target_date_str:
 
 
 def _fetch_actual_record_for_city(city: str, district: str, record_date_str: str):
-    """从 Open-Meteo Archive API 拉取某城市某日期的真实观测数据，入库 actual_records。"""
+    """从 Open-Meteo Archive API 拉取某城市某日期的真实观测数据，入库 actual_records。
+    强制 timezone=auto + temperature_unit=celsius，确保本地日期对齐。
+    """
     lat, lon, tz = _geocode(city, district)
     try:
         data = _http_get_with_retry(
@@ -2308,6 +2358,8 @@ def _fetch_actual_record_for_city(city: str, district: str, record_date_str: str
             {
                 "latitude": lat, "longitude": lon,
                 "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                "timezone": "auto",              # 强制本地时区
+                "temperature_unit": "celsius",    # 强制摄氏度
                 "start_date": record_date_str,
                 "end_date": record_date_str,
             },
@@ -2317,9 +2369,14 @@ def _fetch_actual_record_for_city(city: str, district: str, record_date_str: str
         mx = daily.get("temperature_2m_max") or []
         mn = daily.get("temperature_2m_min") or []
         pr = daily.get("precipitation_sum") or []
-        actual_max = float(mx[0]) if mx and mx[0] is not None else None
-        actual_min = float(mn[0]) if mn and mn[0] is not None else None
-        actual_precip = float(pr[0]) if pr and pr[0] is not None else 0.0
+        actual_max = float(mx[0]) if mx and mx[0] is not None and not (isinstance(mx[0], float) and math.isnan(mx[0])) else None
+        actual_min = float(mn[0]) if mn and mn[0] is not None and not (isinstance(mn[0], float) and math.isnan(mn[0])) else None
+        actual_precip = float(pr[0]) if pr and pr[0] is not None and not (isinstance(pr[0], float) and math.isnan(pr[0])) else 0.0
+        # 极端值过滤
+        if actual_max is not None and (actual_max < -80 or actual_max > 70):
+            actual_max = None
+        if actual_min is not None and (actual_min < -80 or actual_min > 70):
+            actual_min = None
         ACCURACY_STORE.upsert_actual(
             city, district, lat, lon, record_date_str,
             actual_max, actual_min, actual_precip,
@@ -2331,10 +2388,12 @@ def _fetch_actual_record_for_city(city: str, district: str, record_date_str: str
 
 
 def _score_day_for_city(city: str, district: str, record_date_str: str):
-    """对 record_date 这一天，取所有模型的 forecast_snapshots 与 actual_record 做比对，写入 daily_scores。"""
+    """对 record_date 这一天，取所有模型的 forecast_snapshots 与 actual_record 做比对，写入 daily_scores。
+    若 actual 未生成，标记为 pending 不结算 0 分。
+    """
     actual = ACCURACY_STORE.get_actual(city, district, record_date_str)
     if not actual:
-        return {"city": city, "district": district, "record_date": record_date_str, "scored": 0, "note": "no actual"}
+        return {"city": city, "district": district, "record_date": record_date_str, "scored": 0, "status": "pending", "note": "actual_records not yet available"}
     forecasts = ACCURACY_STORE.get_forecasts(city, district, record_date_str)
     scored = 0
     for fc in forecasts:
@@ -2344,7 +2403,7 @@ def _score_day_for_city(city: str, district: str, record_date_str: str):
             sc["score_temp"], sc["score_precip"], sc["score_daily"],
         )
         scored += 1
-    return {"city": city, "district": district, "record_date": record_date_str, "scored": scored}
+    return {"city": city, "district": district, "record_date": record_date_str, "scored": scored, "status": "done"}
 
 
 def _run_daily_forecast_job():
