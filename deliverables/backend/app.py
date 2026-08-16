@@ -19,6 +19,7 @@ import json
 import hashlib
 import os
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Query, Header
 from fastapi.staticfiles import StaticFiles
@@ -556,6 +557,385 @@ class UserStore:
 
 
 USER_STORE = UserStore(APP_CONFIG["mysql"])
+
+
+# =====================================================================
+# 多模型准确率比对与智能择优系统
+# =====================================================================
+
+# 参与准确率评分的 6 个真实数值模型（best_match 是融合结果不参与评分、仅用作推荐）
+_SCORED_MODELS = [
+    "ecmwf_ifs025",
+    "gfs_seamless",
+    "icon_seamless",
+    "jma_seamless",
+    "cma_grapes_global",
+    "meteofrance_seamless",
+]
+
+# 需要抓取的核心城市（每日跑批的对象）——覆盖热门城市 + 区县级精度
+_EVAL_CITIES = [
+    {"city": "北京", "district": "朝阳区"},
+    {"city": "上海", "district": "浦东新区"},
+    {"city": "广州", "district": "天河区"},
+    {"city": "深圳", "district": "南山区"},
+    {"city": "成都", "district": "武侯区"},
+    {"city": "杭州", "district": "西湖区"},
+    {"city": "武汉", "district": "洪山区"},
+    {"city": "南京", "district": "鼓楼区"},
+    {"city": "西安", "district": "雁塔区"},
+    {"city": "重庆", "district": "渝中区"},
+]
+
+
+class AccuracyStore:
+    """预测快照 / 实况真值 / 每日得分 三层存储 —— MySQL 优先，不可用降级内存"""
+
+    def __init__(self, mysql_cfg: dict):
+        self.mysql_cfg = mysql_cfg
+        self.mode = "mysql"
+        # 内存模式：三张表用 dict/list，键结构对应 MySQL 表
+        self._forecasts = {}   # key: (city, district, date_str, model) -> row
+        self._actuals = {}     # key: (city, district, date_str) -> row
+        self._scores = {}      # key: (city, district, date_str, model) -> row
+        self._init_db()
+
+    def _connect(self):
+        return pymysql.connect(
+            host=self.mysql_cfg["host"],
+            port=int(self.mysql_cfg.get("port", 3306)),
+            user=self.mysql_cfg["user"],
+            password=self.mysql_cfg.get("password", ""),
+            database=self.mysql_cfg.get("database", ""),
+            charset=self.mysql_cfg.get("charset", "utf8mb4"),
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=3,
+        )
+
+    def _init_db(self):
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS forecast_snapshots (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        city VARCHAR(50) NOT NULL,
+                        district VARCHAR(50) NOT NULL,
+                        latitude DECIMAL(10,6),
+                        longitude DECIMAL(10,6),
+                        model_code VARCHAR(50) NOT NULL,
+                        target_date DATE NOT NULL,
+                        pred_temp_max DECIMAL(5,1),
+                        pred_temp_min DECIMAL(5,1),
+                        pred_precip_sum DECIMAL(7,2) DEFAULT 0,
+                        created_at BIGINT NOT NULL,
+                        UNIQUE KEY uk_forecast (city, district, target_date, model_code)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS actual_records (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        city VARCHAR(50) NOT NULL,
+                        district VARCHAR(50) NOT NULL,
+                        latitude DECIMAL(10,6),
+                        longitude DECIMAL(10,6),
+                        record_date DATE NOT NULL,
+                        actual_temp_max DECIMAL(5,1),
+                        actual_temp_min DECIMAL(5,1),
+                        actual_precip_sum DECIMAL(7,2) DEFAULT 0,
+                        created_at BIGINT NOT NULL,
+                        UNIQUE KEY uk_actual (city, district, record_date)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS daily_scores (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        city VARCHAR(50) NOT NULL,
+                        district VARCHAR(50) NOT NULL,
+                        model_code VARCHAR(50) NOT NULL,
+                        record_date DATE NOT NULL,
+                        score_temp DECIMAL(6,2),
+                        score_precip DECIMAL(6,2),
+                        score_daily DECIMAL(6,2),
+                        created_at BIGINT NOT NULL,
+                        UNIQUE KEY uk_score (city, district, record_date, model_code)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                conn.commit()
+            conn.close()
+            self.mode = "mysql"
+            print("  [Accuracy] MySQL 模式：forecast_snapshots/actual_records/daily_scores 就绪")
+        except Exception as e:
+            self.mode = "memory"
+            print(f"  [Accuracy] 警告：MySQL 不可用，降级内存存储（{type(e).__name__}: {e}）")
+
+    # ----- 预测快照 -----
+    def upsert_forecast(self, city, district, lat, lon, model_code, target_date, pred_max, pred_min, pred_precip):
+        date_str = target_date.strftime("%Y-%m-%d") if isinstance(target_date, datetime) else str(target_date)
+        ts = _now_ms()
+        if self.mode == "mysql":
+            try:
+                conn = self._connect()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO forecast_snapshots
+                          (city,district,latitude,longitude,model_code,target_date,pred_temp_max,pred_temp_min,pred_precip_sum,created_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON DUPLICATE KEY UPDATE
+                          latitude=VALUES(latitude),longitude=VALUES(longitude),
+                          pred_temp_max=VALUES(pred_temp_max),pred_temp_min=VALUES(pred_temp_min),
+                          pred_precip_sum=VALUES(pred_precip_sum),created_at=VALUES(created_at)
+                        """,
+                        (city, district, lat, lon, model_code, date_str,
+                         pred_max, pred_min, pred_precip, ts),
+                    )
+                    conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"[Accuracy] upsert_forecast mysql err: {e}")
+        self._forecasts[(city, district, date_str, model_code)] = {
+            "city": city, "district": district, "latitude": lat, "longitude": lon,
+            "model_code": model_code, "target_date": date_str,
+            "pred_temp_max": float(pred_max) if pred_max is not None else None,
+            "pred_temp_min": float(pred_min) if pred_min is not None else None,
+            "pred_precip_sum": float(pred_precip) if pred_precip is not None else 0.0,
+            "created_at": ts,
+        }
+
+    def get_forecasts(self, city, district, target_date, model_codes=None):
+        date_str = target_date.strftime("%Y-%m-%d") if isinstance(target_date, datetime) else str(target_date)
+        result = []
+        codes = model_codes or _SCORED_MODELS
+        if self.mode == "mysql":
+            try:
+                conn = self._connect()
+                with conn.cursor() as cur:
+                    placeholders = ",".join(["%s"] * len(codes))
+                    cur.execute(
+                        f"SELECT * FROM forecast_snapshots WHERE city=%s AND district=%s AND target_date=%s AND model_code IN ({placeholders})",
+                        (city, district, date_str, *codes),
+                    )
+                    result = cur.fetchall() or []
+                conn.close()
+                return result
+            except Exception:
+                pass
+        for m in codes:
+            r = self._forecasts.get((city, district, date_str, m))
+            if r: result.append(r)
+        return result
+
+    # ----- 实况真值 -----
+    def upsert_actual(self, city, district, lat, lon, record_date, actual_max, actual_min, actual_precip):
+        date_str = record_date.strftime("%Y-%m-%d") if isinstance(record_date, datetime) else str(record_date)
+        ts = _now_ms()
+        if self.mode == "mysql":
+            try:
+                conn = self._connect()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO actual_records
+                          (city,district,latitude,longitude,record_date,actual_temp_max,actual_temp_min,actual_precip_sum,created_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON DUPLICATE KEY UPDATE
+                          latitude=VALUES(latitude),longitude=VALUES(longitude),
+                          actual_temp_max=VALUES(actual_temp_max),actual_temp_min=VALUES(actual_temp_min),
+                          actual_precip_sum=VALUES(actual_precip_sum),created_at=VALUES(created_at)
+                        """,
+                        (city, district, lat, lon, date_str,
+                         actual_max, actual_min, actual_precip, ts),
+                    )
+                    conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"[Accuracy] upsert_actual mysql err: {e}")
+        self._actuals[(city, district, date_str)] = {
+            "city": city, "district": district, "latitude": lat, "longitude": lon,
+            "record_date": date_str,
+            "actual_temp_max": float(actual_max) if actual_max is not None else None,
+            "actual_temp_min": float(actual_min) if actual_min is not None else None,
+            "actual_precip_sum": float(actual_precip) if actual_precip is not None else 0.0,
+            "created_at": ts,
+        }
+
+    def get_actual(self, city, district, record_date):
+        date_str = record_date.strftime("%Y-%m-%d") if isinstance(record_date, datetime) else str(record_date)
+        if self.mode == "mysql":
+            try:
+                conn = self._connect()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM actual_records WHERE city=%s AND district=%s AND record_date=%s",
+                        (city, district, date_str),
+                    )
+                    row = cur.fetchone()
+                conn.close()
+                if row: return row
+            except Exception:
+                pass
+        return self._actuals.get((city, district, date_str))
+
+    # ----- 每日得分 -----
+    def upsert_score(self, city, district, model_code, record_date, score_temp, score_precip, score_daily):
+        date_str = record_date.strftime("%Y-%m-%d") if isinstance(record_date, datetime) else str(record_date)
+        ts = _now_ms()
+        if self.mode == "mysql":
+            try:
+                conn = self._connect()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO daily_scores
+                          (city,district,model_code,record_date,score_temp,score_precip,score_daily,created_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s)
+                        ON DUPLICATE KEY UPDATE
+                          score_temp=VALUES(score_temp),score_precip=VALUES(score_precip),
+                          score_daily=VALUES(score_daily),created_at=VALUES(created_at)
+                        """,
+                        (city, district, model_code, date_str,
+                         score_temp, score_precip, score_daily, ts),
+                    )
+                    conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"[Accuracy] upsert_score mysql err: {e}")
+        self._scores[(city, district, date_str, model_code)] = {
+            "city": city, "district": district, "model_code": model_code,
+            "record_date": date_str,
+            "score_temp": float(score_temp), "score_precip": float(score_precip),
+            "score_daily": float(score_daily),
+            "created_at": ts,
+        }
+
+    def get_scores_daterange(self, city, district, start_date, end_date, model_codes=None):
+        """取 [start_date, end_date] 区间内的每日得分，日期均为 str 'YYYY-MM-DD' 或 datetime"""
+        s = start_date.strftime("%Y-%m-%d") if isinstance(start_date, datetime) else str(start_date)
+        e = end_date.strftime("%Y-%m-%d") if isinstance(end_date, datetime) else str(end_date)
+        codes = model_codes or _SCORED_MODELS
+        result = []
+        if self.mode == "mysql":
+            try:
+                conn = self._connect()
+                with conn.cursor() as cur:
+                    placeholders = ",".join(["%s"] * len(codes))
+                    cur.execute(
+                        f"SELECT * FROM daily_scores WHERE city=%s AND district=%s AND record_date>=%s AND record_date<=%s AND model_code IN ({placeholders}) ORDER BY record_date ASC",
+                        (city, district, s, e, *codes),
+                    )
+                    result = cur.fetchall() or []
+                conn.close()
+                return result
+            except Exception:
+                pass
+        # 内存
+        for key, row in self._scores.items():
+            if key[0] == city and key[1] == district and s <= key[2] <= e and key[3] in codes:
+                result.append(row)
+        result.sort(key=lambda r: r["record_date"])
+        return result
+
+    def rolling_7day_rank(self, city, district, end_date):
+        """近 7 天滚动得分排名（end_date 含当天，向前 7 天）"""
+        e_dt = end_date if isinstance(end_date, datetime) else datetime.strptime(str(end_date), "%Y-%m-%d")
+        s_dt = e_dt - timedelta(days=6)
+        s = s_dt.strftime("%Y-%m-%d")
+        e = e_dt.strftime("%Y-%m-%d")
+        rows = self.get_scores_daterange(city, district, s, e)
+
+        # 聚合到每个模型
+        per_model = {}
+        for r in rows:
+            m = r["model_code"]
+            if m not in per_model:
+                per_model[m] = {"temps": [], "precips": [], "dailys": []}
+            if r["score_temp"] is not None:
+                per_model[m]["temps"].append(float(r["score_temp"]))
+            if r["score_precip"] is not None:
+                per_model[m]["precips"].append(float(r["score_precip"]))
+            if r["score_daily"] is not None:
+                per_model[m]["dailys"].append(float(r["score_daily"]))
+
+        ranking = []
+        for m in _SCORED_MODELS:
+            data = per_model.get(m, {})
+            n = len(data.get("dailys", []))
+            score = round(sum(data["dailys"]) / n, 2) if n else 0.0
+            s_temp = round(sum(data["temps"]) / len(data["temps"]), 2) if data.get("temps") else 0.0
+            s_prec = round(sum(data["precips"]) / len(data["precips"]), 2) if data.get("precips") else 0.0
+            ranking.append({
+                "model_code": m,
+                "score_daily_7d": score,
+                "score_temp_7d": s_temp,
+                "score_precip_7d": s_prec,
+                "samples_7d": n,
+            })
+
+        ranking.sort(key=lambda r: r["score_daily_7d"], reverse=True)
+        for i, r in enumerate(ranking):
+            r["rank"] = i + 1
+        best = ranking[0] if ranking else None
+        return {
+            "city": city, "district": district,
+            "period": f"{s} ~ {e}",
+            "ranking": ranking,
+            "best_model": best["model_code"] if best else None,
+            "best_score": best["score_daily_7d"] if best else 0.0,
+        }
+
+
+ACCURACY_STORE = AccuracyStore(APP_CONFIG["mysql"])
+
+
+# =====================================================================
+# 打分算法
+# =====================================================================
+
+def compute_daily_score(pred_row, actual_row) -> dict:
+    """
+    根据：
+    Score_temp = max(0, 100 - E_temp * 15), E_temp = (|max差|+|min差|)/2
+    Score_precip = 命中100 / 未命中20（相差>50%额外减）
+    Score_daily = 0.6*St + 0.4*Sp
+    """
+    E_temp = 0
+    missing = 0
+    if (pred_row.get("pred_temp_max") is not None and actual_row.get("actual_temp_max") is not None
+            and pred_row.get("pred_temp_min") is not None and actual_row.get("actual_temp_min") is not None):
+        diff_max = abs(float(pred_row["pred_temp_max"]) - float(actual_row["actual_temp_max"]))
+        diff_min = abs(float(pred_row["pred_temp_min"]) - float(actual_row["actual_temp_min"]))
+        E_temp = (diff_max + diff_min) / 2.0
+    else:
+        missing += 1
+    Score_temp = max(0.0, 100.0 - E_temp * 15.0)
+
+    precip_pred = float(pred_row.get("pred_precip_sum") or 0.0)
+    precip_actual = float(actual_row.get("actual_precip_sum") or 0.0)
+    pred_rain = precip_pred >= 0.5
+    actual_rain = precip_actual >= 0.5
+    if pred_rain == actual_rain:
+        Score_precip = 100.0
+    else:
+        Score_precip = 20.0
+        # 量级差 >50% 额外扣分
+        if precip_pred > 0 and precip_actual > 0:
+            ratio = max(precip_pred, precip_actual) / max(min(precip_pred, precip_actual), 1e-6)
+            if ratio > 2.0:
+                Score_precip = max(0.0, Score_precip - 15.0)
+
+    Score_daily = Score_temp * 0.6 + Score_precip * 0.4
+    return {
+        "score_temp": round(Score_temp, 2),
+        "score_precip": round(Score_precip, 2),
+        "score_daily": round(Score_daily, 2),
+    }
 
 
 def _create_token(user_id: int, username: str) -> str:
@@ -1138,20 +1518,55 @@ def get_weather(
     district: str = Query(..., description="区域名，如：朝阳区"),
     source: str = Query(None, description="数据源 ID，用于选择对应的预测模型；留空则用默认融合模型"),
 ):
-    """根据城市和区域返回真实天气数据（Open-Meteo），失败时降级返回本地生成的实时观测数据
+    """根据城市和区域返回真实天气数据（Open-Meteo）+ 多模型准确率比对结果。
 
-    不同数据源（source）对应不同的 Open-Meteo 预测模型，切换数据源能看到
-    真实的模式预报差异。商业/手机聚合类源使用 best_match 多模式融合，
-    最贴近手机内置天气，选中与手机一致的源时展示的是该模式真实输出，无人工扰动。
+    返回值附带 accuracy 字段，包含：
+      - best_recommended_model / best_recommended_score / best_recommended: 是否该模型是近7天最优
+      - ranking：6 个真实数值模型近 7 天的综合得分排名（可画柱状图/折线图）
     """
     try:
-        return _fetch_real_weather(city, district, source)
+        result = _fetch_real_weather(city, district, source)
     except Exception as e:
         print(f"[Weather] Open-Meteo failed for {city}/{district} (source={source}): {e}")
-        fallback = _gen_weather(city, district)
-        fallback["real_data"] = True
-        fallback["fallback_reason"] = str(e)
-        return fallback
+        result = _gen_weather(city, district)
+        result["real_data"] = True
+        result["fallback_reason"] = str(e)
+
+    # 附带准确率排名（若数据不足则返回空 ranking 与 best_recommended=False）
+    try:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        rank = ACCURACY_STORE.rolling_7day_rank(city, district, today_str)
+        best_model = rank.get("best_model")
+        current_model = result.get("model") or "best_match"
+        # 把引擎 ID 也映射成引擎中文名（前端显示用）
+        code_to_name = {v["model"]: v["name"] for v in [
+            {"model": "best_match", "name": "智能综合"},
+            {"model": "ecmwf_ifs025", "name": "苹果/三星"},
+            {"model": "gfs_seamless", "name": "微软/Google"},
+            {"model": "icon_seamless", "name": "Windy/DWD"},
+            {"model": "jma_seamless", "name": "日本气象厅"},
+            {"model": "cma_grapes_global", "name": "中国气象局"},
+            {"model": "meteofrance_seamless", "name": "法国高精"},
+        ]}
+        for r in rank["ranking"]:
+            r["display_name"] = code_to_name.get(r["model_code"], r["model_code"])
+        accuracy = {
+            "city": rank["city"],
+            "district": rank["district"],
+            "period": rank["period"],
+            "best_recommended_model": best_model,
+            "best_recommended_model_name": code_to_name.get(best_model, best_model) if best_model else None,
+            "best_recommended_score": rank.get("best_score", 0.0),
+            "best_recommended": bool(current_model == best_model and best_model is not None),
+            "current_model": current_model,
+            "ranking": rank["ranking"],
+        }
+    except Exception as ae:
+        print(f"[Weather] accuracy compute err: {type(ae).__name__}: {ae}")
+        accuracy = {"best_recommended": False, "ranking": []}
+
+    result["accuracy"] = accuracy
+    return result
 
 
 # ---- 排行榜动态波动（让数据看起来在变化）----
@@ -1831,10 +2246,233 @@ app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
 # 启动入口
 # =====================================================================
 
+# =====================================================================
+# 多模型准确率比对 —— 抓取 / 评分任务与手动管理 API
+# =====================================================================
+
+# Open-Meteo Archive Historical Weather API（用于拉取昨日实况真值）
+_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+# 预测 API 主站（复用 _fetch_real_weather 逻辑，但直接取 daily 做 T+1）
+_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+
+
+def _fetch_forecast_snapshot_for_city(city: str, district: str, target_date_str: str):
+    """对单一城市+T+1日期，循环 _SCORED_MODELS，调用 Open-Meteo 拿预报数据并入库。"""
+    lat, lon, tz = _geocode(city, district)
+    results = []
+    for model_code in _SCORED_MODELS:
+        try:
+            # meteofrance 只有 4 天；其余 7 天
+            fd = 4 if model_code == "meteofrance_seamless" else 7
+            data = _http_get_with_retry(
+                _FORECAST_URL,
+                {
+                    "latitude": lat, "longitude": lon,
+                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                    "timezone": tz,
+                    "forecast_days": fd,
+                    "models": model_code,
+                },
+                attempts=2, timeout=15.0,
+            )
+            daily = data.get("daily") or {}
+            dates = daily.get("time") or []
+            mx = daily.get("temperature_2m_max") or []
+            mn = daily.get("temperature_2m_min") or []
+            pr = daily.get("precipitation_sum") or []
+            idx = None
+            for i, d in enumerate(dates):
+                if str(d) == target_date_str:
+                    idx = i; break
+            if idx is None:
+                continue
+            pred_max = mx[idx] if idx < len(mx) else None
+            pred_min = mn[idx] if idx < len(mn) else None
+            pred_precip = pr[idx] if idx < len(pr) else 0.0
+            ACCURACY_STORE.upsert_forecast(
+                city, district, lat, lon, model_code, target_date_str,
+                pred_max, pred_min, pred_precip,
+            )
+            results.append({"model": model_code, "ok": True, "max": pred_max, "min": pred_min, "precip": pred_precip})
+        except Exception as e:
+            results.append({"model": model_code, "ok": False, "err": str(e)})
+    return {"city": city, "district": district, "target_date": target_date_str, "results": results}
+
+
+def _fetch_actual_record_for_city(city: str, district: str, record_date_str: str):
+    """从 Open-Meteo Archive API 拉取某城市某日期的真实观测数据，入库 actual_records。"""
+    lat, lon, tz = _geocode(city, district)
+    try:
+        data = _http_get_with_retry(
+            _ARCHIVE_URL,
+            {
+                "latitude": lat, "longitude": lon,
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                "start_date": record_date_str,
+                "end_date": record_date_str,
+            },
+            attempts=2, timeout=20.0,
+        )
+        daily = data.get("daily") or {}
+        mx = daily.get("temperature_2m_max") or []
+        mn = daily.get("temperature_2m_min") or []
+        pr = daily.get("precipitation_sum") or []
+        actual_max = float(mx[0]) if mx and mx[0] is not None else None
+        actual_min = float(mn[0]) if mn and mn[0] is not None else None
+        actual_precip = float(pr[0]) if pr and pr[0] is not None else 0.0
+        ACCURACY_STORE.upsert_actual(
+            city, district, lat, lon, record_date_str,
+            actual_max, actual_min, actual_precip,
+        )
+        return {"city": city, "district": district, "record_date": record_date_str,
+                "max": actual_max, "min": actual_min, "precip": actual_precip, "ok": True}
+    except Exception as e:
+        return {"city": city, "district": district, "record_date": record_date_str, "ok": False, "err": str(e)}
+
+
+def _score_day_for_city(city: str, district: str, record_date_str: str):
+    """对 record_date 这一天，取所有模型的 forecast_snapshots 与 actual_record 做比对，写入 daily_scores。"""
+    actual = ACCURACY_STORE.get_actual(city, district, record_date_str)
+    if not actual:
+        return {"city": city, "district": district, "record_date": record_date_str, "scored": 0, "note": "no actual"}
+    forecasts = ACCURACY_STORE.get_forecasts(city, district, record_date_str)
+    scored = 0
+    for fc in forecasts:
+        sc = compute_daily_score(fc, actual)
+        ACCURACY_STORE.upsert_score(
+            city, district, fc["model_code"], record_date_str,
+            sc["score_temp"], sc["score_precip"], sc["score_daily"],
+        )
+        scored += 1
+    return {"city": city, "district": district, "record_date": record_date_str, "scored": scored}
+
+
+def _run_daily_forecast_job():
+    """每日 08:00 执行：对所有 _EVAL_CITIES 抓明日(T+1)的预测快照。"""
+    today_local = datetime.now().date()
+    target_date = (today_local + timedelta(days=1)).strftime("%Y-%m-%d")
+    print(f"[Cron 08:00] 开始抓取 T+1={target_date} 预测快照，城市数 {len(_EVAL_CITIES)}")
+    out = []
+    for c in _EVAL_CITIES:
+        out.append(_fetch_forecast_snapshot_for_city(c["city"], c["district"], target_date))
+        time.sleep(0.3)
+    print(f"[Cron 08:00] 预测快照完成 {len(out)} 城市")
+    return {"job": "forecast", "target_date": target_date, "cities": out}
+
+
+def _run_daily_actual_and_score_job():
+    """每日 08:30 执行：抓昨日(T-1)实况真值，然后评分，产出每日得分。"""
+    yesterday = (datetime.now().date() - timedelta(days=1)).strftime("%Y-%m-%d")
+    print(f"[Cron 08:30] 开始抓取 T-1={yesterday} 实况真值并评分，城市数 {len(_EVAL_CITIES)}")
+    actuals = []; scores = []
+    for c in _EVAL_CITIES:
+        actuals.append(_fetch_actual_record_for_city(c["city"], c["district"], yesterday))
+        time.sleep(0.3)
+        scores.append(_score_day_for_city(c["city"], c["district"], yesterday))
+    print(f"[Cron 08:30] 实况 + 评分完成 {len(actuals)} 城市")
+    return {"job": "actual+score", "record_date": yesterday, "actuals": actuals, "scores": scores}
+
+
+# ---- 手动管理 API（POST，无鉴权；内部使用）----
+
+@app.post("/api/accuracy/run-forecast", tags=["准确率系统"], summary="手动：抓取 T+1 预测快照")
+def api_run_forecast(target_date: str = Query(None, description="目标日期 YYYY-MM-DD，留空 = 明日")):
+    today_local = datetime.now().date()
+    target_date = target_date or (today_local + timedelta(days=1)).strftime("%Y-%m-%d")
+    out = []
+    for c in _EVAL_CITIES:
+        out.append(_fetch_forecast_snapshot_for_city(c["city"], c["district"], target_date))
+        time.sleep(0.25)
+    return {"target_date": target_date, "cities": out}
+
+
+@app.post("/api/accuracy/run-actual", tags=["准确率系统"], summary="手动：抓取某日实况真值")
+def api_run_actual(record_date: str = Query(..., description="记录日期 YYYY-MM-DD，例如昨天")):
+    out = []
+    for c in _EVAL_CITIES:
+        out.append(_fetch_actual_record_for_city(c["city"], c["district"], record_date))
+        time.sleep(0.25)
+    return {"record_date": record_date, "actuals": out}
+
+
+@app.post("/api/accuracy/run-score", tags=["准确率系统"], summary="手动：对某日所有模型评分")
+def api_run_score(record_date: str = Query(..., description="记录日期 YYYY-MM-DD")):
+    out = []
+    for c in _EVAL_CITIES:
+        out.append(_score_day_for_city(c["city"], c["district"], record_date))
+    return {"record_date": record_date, "scores": out}
+
+
+@app.get("/api/accuracy/rank", tags=["准确率系统"], summary="查询某城市近7天准确率排名")
+def api_accuracy_rank(city: str = Query(...), district: str = Query(...)):
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    rank = ACCURACY_STORE.rolling_7day_rank(city, district, today_str)
+    code_to_name = {
+        "best_match": "智能综合",
+        "ecmwf_ifs025": "苹果/三星",
+        "gfs_seamless": "微软/Google",
+        "icon_seamless": "Windy/DWD",
+        "jma_seamless": "日本气象厅",
+        "cma_grapes_global": "中国气象局",
+        "meteofrance_seamless": "法国高精",
+    }
+    for r in rank["ranking"]:
+        r["display_name"] = code_to_name.get(r["model_code"], r["model_code"])
+    return rank
+
+
+# =====================================================================
+# Cron 后台线程：每日 08:00 抓预测、每日 08:30 抓实况+评分
+# =====================================================================
+
+def _cron_worker():
+    """每分钟醒来一次，检查是否到点，到点就执行对应任务。
+    避免 threading.Timer 长漂；只在本地时间 08:00-08:02、08:30-08:32 窗口内触发，保证一天一次。
+    """
+    last_forecast_day = None
+    last_actual_day = None
+    while True:
+        try:
+            now = datetime.now()
+            hh, mm, today = now.hour, now.minute, now.strftime("%Y-%m-%d")
+            if hh == 8 and 0 <= mm <= 2 and today != last_forecast_day:
+                try:
+                    _run_daily_forecast_job()
+                finally:
+                    last_forecast_day = today
+            if hh == 8 and 30 <= mm <= 32 and today != last_actual_day:
+                try:
+                    _run_daily_actual_and_score_job()
+                finally:
+                    last_actual_day = today
+        except Exception as e:
+            print(f"[Cron] worker loop err: {type(e).__name__}: {e}")
+        # 睡眠 45 秒再查
+        time.sleep(45)
+
+
+_CRON_THREAD = None
+
+
+def _start_cron_if_needed():
+    global _CRON_THREAD
+    if _CRON_THREAD and _CRON_THREAD.is_alive():
+        return
+    try:
+        _CRON_THREAD = threading.Thread(target=_cron_worker, daemon=True, name="accuracy-cron")
+        _CRON_THREAD.start()
+        print("  [Cron] 准确率后台定时线程已启动：每日 08:00 抓预测 / 08:30 抓实况+评分")
+    except Exception as e:
+        print(f"  [Cron] 启动失败: {e}")
+
+
+# =====================================================================
+# 启动入口
+# =====================================================================
+
 if __name__ == "__main__":
-    print()
     print("=" * 60)
-    print("  聚合天气平台 - 后端服务")
+    print("  聚合天气平台 - 后端服务（含多模型准确率比对系统）")
     print("=" * 60)
     print()
     _port = int(os.environ.get("PORT", "8000"))
@@ -1842,7 +2480,15 @@ if __name__ == "__main__":
     print("  API 文档:  http://localhost:%d/docs" % _port)
     print("  健康检查:  http://localhost:%d/api/health" % _port)
     print()
+    print("  准确率管理 API（内部）:")
+    print("    POST /api/accuracy/run-forecast?target_date=YYYY-MM-DD")
+    print("    POST /api/accuracy/run-actual?record_date=YYYY-MM-DD")
+    print("    POST /api/accuracy/run-score?record_date=YYYY-MM-DD")
+    print("    GET  /api/accuracy/rank?city=北京&district=朝阳区")
+    print("  Cron: 每日 08:00 抓预测 / 08:30 抓实况+评分")
+    print()
     print("  按 Ctrl+C 停止服务")
     print("=" * 60)
     print()
+    _start_cron_if_needed()
     uvicorn.run(app, host="0.0.0.0", port=_port)
