@@ -255,15 +255,14 @@ for _it in RANK_DATA["7d"]:
     SOURCE_DATA[_it["id"]]["rank"] = _it["rank"]
 
 # 引擎类数据源 → Open-Meteo 真实预测模型映射
-# 每个引擎对应一个真实的数值天气预报模型，切换引擎即切换真实数据源。
-# 前端选择条展示这 7 个引擎分类，后端按引擎 ID 请求对应模型。
+# 7 个引擎严格按用户要求的顺序、名称、参数名：
 _ENGINE_MODELS = {
     "smart_blend":      "best_match",            # 智能综合推荐：多模式融合
-    "apple_samsung":    "ecmwf_ifs025",          # 苹果/三星天气底座：ECMWF
-    "microsoft_google": "gfs_seamless",          # 微软/Google天气底座：GFS
+    "apple_samsung":    "ecmwf_ifs025",          # 苹果/三星天气底座：ECMWF 欧洲中心
+    "microsoft_google": "gfs_seamless",          # 微软/Google天气底座：GFS 美国全球
     "windy_dwd":        "icon_seamless",         # Windy/德国ICON底座：DWD ICON
     "jma_eastasia":     "jma_seamless",          # 日本气象厅/东亚底座：JMA
-    "cma_china":        "cma_grapes_global",     # 中国气象局底座：CMA GRAPES
+    "cma_china":        "cma_gfs",               # 中国气象局底座：CMA GFS
     "meteo_france":     "meteofrance_seamless",  # 法国高精底座：Météo-France
 }
 
@@ -569,7 +568,7 @@ _SCORED_MODELS = [
     "gfs_seamless",
     "icon_seamless",
     "jma_seamless",
-    "cma_grapes_global",
+    "cma_gfs",
     "meteofrance_seamless",
 ]
 
@@ -1538,16 +1537,17 @@ def get_weather(
         rank = ACCURACY_STORE.rolling_7day_rank(city, district, today_str)
         best_model = rank.get("best_model")
         current_model = result.get("model") or "best_match"
-        # 把引擎 ID 也映射成引擎中文名（前端显示用）
-        code_to_name = {v["model"]: v["name"] for v in [
-            {"model": "best_match", "name": "智能综合"},
-            {"model": "ecmwf_ifs025", "name": "苹果/三星"},
-            {"model": "gfs_seamless", "name": "微软/Google"},
-            {"model": "icon_seamless", "name": "Windy/DWD"},
-            {"model": "jma_seamless", "name": "日本气象厅"},
-            {"model": "cma_grapes_global", "name": "中国气象局"},
-            {"model": "meteofrance_seamless", "name": "法国高精"},
-        ]}
+        # 把 model_code 映射成引擎中文名（前端显示用），与 _ENGINE_MODELS / ENGINE_SOURCES 对齐
+        code_to_name = {
+            "best_match": "智能综合",
+            "ecmwf_ifs025": "苹果/三星",
+            "gfs_seamless": "微软/Google",
+            "icon_seamless": "Windy/DWD",
+            "jma_seamless": "日本气象厅",
+            "cma_gfs": "中国气象局",
+            "cma_grapes_global": "中国气象局",  # 兼容旧数据
+            "meteofrance_seamless": "法国高精",
+        }
         for r in rank["ranking"]:
             r["display_name"] = code_to_name.get(r["model_code"], r["model_code"])
         accuracy = {
@@ -2413,6 +2413,7 @@ def api_accuracy_rank(city: str = Query(...), district: str = Query(...)):
         "gfs_seamless": "微软/Google",
         "icon_seamless": "Windy/DWD",
         "jma_seamless": "日本气象厅",
+        "cma_gfs": "中国气象局",
         "cma_grapes_global": "中国气象局",
         "meteofrance_seamless": "法国高精",
     }
