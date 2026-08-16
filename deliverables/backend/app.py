@@ -253,35 +253,50 @@ for _range, _mult in (("7d", 1.0), ("30d", 0.985), ("all", 0.97)):
 for _it in RANK_DATA["7d"]:
     SOURCE_DATA[_it["id"]]["rank"] = _it["rank"]
 
-# 各数据源对应的 Open-Meteo 真实预测模型
-# 分层策略（严格遵循，确保与手机 APP 贴近）：
-#   1) 手机/商业/聚合类源（华为/苹果/小米/彩云/和风/墨迹/中国天气/天气通/Accu 等）
-#      → 统一使用 best_match（Open-Meteo 官方多模式融合 + 后处理），这是免费版中
-#         最接近真实手机内置天气 APP 展示策略的数据源，零人工偏移、有一说一。
-#   2) 纯数值模式源（ECMWF / GFS / ICON / CMA / GRAPES）
-#      → 使用各自的真实模型，方便对比不同数值模式的预报差异。
+# 引擎类数据源 → Open-Meteo 真实预测模型映射
+# 每个引擎对应一个真实的数值天气预报模型，切换引擎即切换真实数据源。
+# 前端选择条展示这 7 个引擎分类，后端按引擎 ID 请求对应模型。
+_ENGINE_MODELS = {
+    "smart_blend":      "best_match",            # 智能综合推荐：多模式融合
+    "apple_samsung":    "ecmwf_ifs025",          # 苹果/三星天气底座：ECMWF
+    "microsoft_google": "gfs_seamless",          # 微软/Google天气底座：GFS
+    "windy_dwd":        "icon_seamless",         # Windy/德国ICON底座：DWD ICON
+    "jma_eastasia":     "jma_seamless",          # 日本气象厅/东亚底座：JMA
+    "cma_china":        "cma_grapes_global",     # 中国气象局底座：CMA GRAPES
+    "meteo_france":     "meteofrance_seamless",  # 法国高精底座：Météo-France
+}
+
+# 部分模型有预报天数限制
+_MODEL_MAX_DAYS = {
+    "meteofrance_seamless": 4,   # Météo-France 最多 4 天
+    "jma_seamless": 7,           # JMA 最多 7 天
+}
+
+# 排行榜/详情页用的旧源 ID → 模型映射（向后兼容）
 _SOURCE_MODELS = {
-    # —— 纯数值模式（真实模型，对比差异用）——
+    # 纯数值模式
     "ecmwf": "ecmwf_ifs025",
     "icon": "icon_seamless",
     "grapes": "cma_grapes_global",
     "cma": "cma_grapes_global",
     "gfs": "gfs_seamless",
-    # —— 手机 / 商业 / 聚合类：统一 best_match，最贴近手机真实 APP ——
-    "caiyun": "best_match",              # 彩云
-    "pws": "best_match",                 # PWS
-    "qweather": "best_match",            # 和风天气
-    "moji": "best_match",                # 墨迹天气
-    "weathercom": "best_match",          # 天气通
-    "huawei": "best_match",              # 华为天气
-    "xiaomi": "best_match",              # 小米天气
-    "apple": "best_match",               # 苹果天气
-    # —— 官方 / 平台类 ——
+    # 商业/手机类（排行榜用）
+    "caiyun": "best_match",
+    "pws": "best_match",
+    "qweather": "best_match",
+    "moji": "best_match",
+    "weathercom": "best_match",
+    "huawei": "best_match",
+    "xiaomi": "best_match",
+    "apple": "best_match",
     "weathercn": "best_match",
     "tct": "best_match",
     "accu": "best_match",
     "goog": "best_match",
 }
+
+# 合并：引擎 ID + 旧源 ID 都能查到模型
+_ALL_MODELS = {**_SOURCE_MODELS, **_ENGINE_MODELS}
 
 NOTIFICATIONS = [
     {"type": "alert", "title": "暴雨橙色预警", "text": "预计未来6小时内，朝阳区累计降水量将达50毫米以上，请注意防范。", "timeOffset": -3600000, "read": False},
@@ -964,11 +979,10 @@ def _geocode(city: str, district: str) -> tuple[float, float, str]:
 def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
     """从 Open-Meteo 获取真实天气实况 + 逐小时 + 7 日预报
 
-    source: 数据源 ID。不同数据源对应不同的 Open-Meteo 预测模型（见 _SOURCE_MODELS），
-    使得切换数据源时能看到真实的模式预报差异，而非人工偏移。
-    商业/手机聚合类源使用 best_match（多模式融合），最贴近手机内置天气。
+    source: 引擎 ID 或旧源 ID。通过 _ALL_MODELS 查找对应的 Open-Meteo 真实预测模型，
+    切换引擎即切换真实数值模式，有一说一、零人工偏移。
     """
-    model = _SOURCE_MODELS.get(source) if source else None
+    model = _ALL_MODELS.get(source) if source else None
     cache_key = f"{city}|{district}|{source or 'default'}"
     now = time.time()
     if cache_key in _WEATHER_CACHE:
@@ -978,6 +992,11 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
 
     lat, lon, tz = _geocode(city, district)
 
+    # 部分模型有预报天数限制（如 meteofrance_seamless 仅 4 天）
+    forecast_days = 7
+    if model and model in _MODEL_MAX_DAYS:
+        forecast_days = _MODEL_MAX_DAYS[model]
+
     weather_params = {
         "latitude": lat,
         "longitude": lon,
@@ -985,7 +1004,7 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
         "hourly": "temperature_2m,weather_code",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,uv_index_max",
         "timezone": tz,
-        "forecast_days": 7,
+        "forecast_days": forecast_days,
     }
     # 指定预测模型：不同数据源使用不同数值模式，体现真实预报差异
     params_with_model = dict(weather_params)

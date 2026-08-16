@@ -1140,7 +1140,25 @@ function wdIcon(t){
 function applySourceVariant(w, src){
   return w;
 }
-let S={city:'北京',district:'朝阳区',range:'7d',filter:'hot',sourceId:null,feedId:null,loggedIn:false,userId:'',username:'',email:'',photos:0,likes:0,userLoc:null,albumFilter:false,avatarCaptureMode:false,pendingPhotos:[],viewingUser:null};
+
+// 引擎类数据源定义：前端选择条展示这 7 个引擎分类
+// 每个引擎对应一个真实的 Open-Meteo 数值天气预报模型
+var ENGINE_SOURCES=[
+  {id:'smart_blend',      name:'智能综合',   desc:'多模式融合推荐',     model:'best_match'},
+  {id:'apple_samsung',    name:'苹果/三星',  desc:'ECMWF 欧洲中心',     model:'ecmwf_ifs025'},
+  {id:'microsoft_google', name:'微软/Google', desc:'GFS 美国全球预报',   model:'gfs_seamless'},
+  {id:'windy_dwd',        name:'Windy/DWD',  desc:'ICON 德国气象局',     model:'icon_seamless'},
+  {id:'jma_eastasia',     name:'日本气象厅',  desc:'JMA 东亚高分辨率',   model:'jma_seamless'},
+  {id:'cma_china',        name:'中国气象局',  desc:'CMA GRAPES 全球模式', model:'cma_grapes_global'},
+  {id:'meteo_france',     name:'法国高精',    desc:'Météo-France ARPEGE', model:'meteofrance_seamless'},
+];
+function getEngine(id){
+  for(var i=0;i<ENGINE_SOURCES.length;i++){
+    if(ENGINE_SOURCES[i].id===id)return ENGINE_SOURCES[i];
+  }
+  return null;
+}
+let S={city:'北京',district:'朝阳区',range:'7d',filter:'hot',sourceId:'smart_blend',feedId:null,loggedIn:false,userId:'',username:'',email:'',photos:0,likes:0,userLoc:null,albumFilter:false,avatarCaptureMode:false,pendingPhotos:[],viewingUser:null};
 var LAST_WEATHER=null;
 let screenHistory=[];
 
@@ -1197,10 +1215,8 @@ updateClocks();
 // ===== Home Render =====
 function updateWeatherDisplay(w){
   LAST_WEATHER=w;
-  var _sd=typeof SOURCE_DATA!=='undefined'&&SOURCE_DATA?SOURCE_DATA:null;
-  var _rd=typeof RANK_DATA!=='undefined'&&RANK_DATA?RANK_DATA:null;
-  var sel=(S.sourceId && _sd && _sd[S.sourceId] && !w.ai_generated)?_sd[S.sourceId]:null;
-  var wv=sel?applySourceVariant(w,sel):w;
+  var eng = (S.sourceId && !w.ai_generated) ? getEngine(S.sourceId) : null;
+  var wv = w; // 不做任何偏移，直接透传后端真实数据
 
   document.getElementById('locName').textContent=S.city+' '+S.district;
 
@@ -1236,24 +1252,18 @@ function updateWeatherDisplay(w){
     }
   }
 
-  // 当前所选天气源 — 大横幅
+  // 当前所选天气引擎 — 大横幅
   var banner=document.getElementById('homeSourceBanner');
   var srcName=document.getElementById('homeSourceName');
   var srcScore=document.getElementById('homeSourceScore');
-  if(sel){
-    srcName.textContent=sel.name;
-    srcScore.textContent=sel.score+'%';
-    banner.onclick=function(){openSource(sel.id);};
-    banner.style.cursor='pointer';
-  }else if(_rd&&_rd['7d']&&_rd['7d'][0]){
-    var top=_rd['7d'][0];
-    srcName.textContent='智能择优 · '+top.name;
-    srcScore.textContent=top.score+'%';
-    banner.onclick=function(){openLeaderboard();};
-    banner.style.cursor='pointer';
+  if(eng){
+    srcName.textContent=eng.name+' · '+eng.desc;
+    srcScore.textContent=eng.model;
+    banner.onclick=null;
+    banner.style.cursor='default';
   }else{
-    srcName.textContent='加载中...';
-    srcScore.textContent='';
+    srcName.textContent='智能综合 · 多模式融合推荐';
+    srcScore.textContent='best_match';
     banner.onclick=null;
     banner.style.cursor='default';
   }
@@ -1375,15 +1385,13 @@ function renderHome(){
     // 兜底数据已渲染，无需额外处理
   });
 }
-// 数据源选择条：智能择优 + 各天气源，点击切换首页展示的数据源
+// 数据源选择条：7 个引擎分类，点击切换首页展示的数据源
 function renderSourceSelector(){
   var box=document.getElementById('sourceSelector');
   if(!box)return;
-  var _rd=typeof RANK_DATA!=='undefined'&&RANK_DATA?RANK_DATA:null;
-  if(!_rd||!_rd['7d']){box.innerHTML='';return;}
-  var html='<div class="source-chip'+(S.sourceId===null?' active':'')+'" onclick="selectSource(null)">智能择优</div>';
-  _rd['7d'].forEach(function(s){
-    html+='<div class="source-chip'+(S.sourceId===s.id?' active':'')+'" onclick="selectSource(\''+s.id+'\')">'+s.name+'</div>';
+  var html='';
+  ENGINE_SOURCES.forEach(function(e){
+    html+='<div class="source-chip'+(S.sourceId===e.id?' active':'')+'" onclick="selectSource(\''+e.id+'\')">'+e.name+'</div>';
   });
   box.innerHTML=html;
 }
