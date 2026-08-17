@@ -65,7 +65,7 @@ html.app-mode .home-hero{padding-top:20px}
 .tab-item.active .tab-label{color:var(--accent);font-weight:600}
 
 /* Home Screen */
-.home-hero{background:linear-gradient(135deg,#3B82F6 0%,#6366F1 50%,#8B5CF6 100%);color:#fff;padding:0 20px 44px;border-radius:0 0 32px 32px;position:relative;overflow:hidden;transition:background .6s ease;height:max-content;flex-shrink:0}
+.home-hero{background:linear-gradient(135deg,#3B82F6 0%,#6366F1 50%,#8B5CF6 100%);color:#fff;padding:0 20px 44px;border-radius:0 0 32px 32px;position:relative;overflow:visible;transition:background .6s ease;flex:0 0 auto}
 /* 天气类型渐变背景 */
 .home-hero[data-w="sunny"]{background:linear-gradient(160deg,#F59E0B 0%,#F97316 45%,#EF4444 100%)}
 .home-hero[data-w="cloudy"]{background:linear-gradient(160deg,#64748B 0%,#6366F1 55%,#8B5CF6 100%)}
@@ -103,7 +103,7 @@ html.app-mode .home-hero{padding-top:20px}
 .weather-temp-unit{font-size:36px;font-weight:300;vertical-align:super;margin-left:2px;opacity:0.85}
 .weather-desc{font-size:22px;font-weight:600;margin-top:6px;opacity:0.96}
 /* 背景天气图案 */
-.weather-pattern{position:absolute;right:-30px;bottom:-80px;width:320px;height:320px;opacity:0.15;z-index:0;pointer-events:none}
+.weather-pattern{position:absolute;right:-30px;bottom:0;width:320px;height:320px;opacity:0.15;z-index:0;pointer-events:none}
 .weather-pattern svg{width:100%;height:100%}
 @keyframes weatherFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-10px) scale(1.03)}}
 /* 当前所选天气源 — 大横幅 */
@@ -1229,7 +1229,17 @@ function updateWeatherDisplay(w){
   document.getElementById('locName').textContent=S.city+' '+S.district;
 
   var hero=document.querySelector('.home-hero');
-  if(hero)hero.setAttribute('data-w',wv.cond||'sunny');
+  if(hero){
+    hero.setAttribute('data-w',wv.cond||'sunny');
+    // 同步 home-cards 顶部渐变背景，确保溢出内容也在渐变背景上
+    var cardsBg={sunny:'linear-gradient(180deg,#F97316 0%,rgba(249,115,22,0.6) 60%,rgba(249,115,22,0) 100%)',
+      cloudy:'linear-gradient(180deg,#6366F1 0%,rgba(99,102,241,0.6) 60%,rgba(99,102,241,0) 100%)',
+      rainy:'linear-gradient(180deg,#2563EB 0%,rgba(37,99,235,0.6) 60%,rgba(37,99,235,0) 100%)',
+      overcast:'linear-gradient(180deg,#64748B 0%,rgba(100,116,139,0.6) 60%,rgba(100,116,139,0) 100%)'};
+    var cbg=cardsBg[wv.cond]||cardsBg.sunny;
+    var cards=document.querySelector('.home-cards');
+    if(cards){cards.style.backgroundImage=cbg;cards.style.backgroundRepeat='no-repeat';cards.style.backgroundPosition='0 0';cards.style.backgroundSize='100% 180px';}
+  }
 
   document.getElementById('homeWeatherIcon').innerHTML=wIcon(wv.cond,130);
   document.getElementById('weatherPattern').innerHTML=wIcon(wv.cond,320);
