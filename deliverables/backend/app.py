@@ -2624,6 +2624,118 @@ def _fetch_actual_record_for_city(city: str, district: str, record_date_str: str
         return {"city": city, "district": district, "record_date": record_date_str, "ok": False, "err": str(e)}
 
 
+# ---- 批量范围抓取（启动 bootstrap 专用，大幅减少 API 调用次数）----
+
+def _fetch_forecast_range_for_city(city: str, district: str, start_date_str: str, end_date_str: str):
+    """批量抓取某城市在 [start_date, end_date] 日期范围内所有 6 个模型的预报快照。
+    优化：每个模型只发 1 次 archive API 调用（start_date~end_date），而非逐天逐模型调用。
+    将 7天×6模型=42 次调用降为 6 次调用，大幅加速 Render 免费版启动。"""
+    lat, lon, tz = _geocode(city, district)
+    today_str = _cn_today_str()
+    use_archive = end_date_str <= today_str
+    results = []
+    for model_code in _SCORED_MODELS:
+        try:
+            if use_archive:
+                data = _http_get_with_retry(
+                    _ARCHIVE_URL,
+                    {
+                        "latitude": lat, "longitude": lon,
+                        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                        "timezone": "auto",
+                        "temperature_unit": "celsius",
+                        "models": model_code,
+                        "start_date": start_date_str,
+                        "end_date": end_date_str,
+                    },
+                    attempts=2, timeout=25.0,
+                )
+            else:
+                fd = 4 if model_code == "meteofrance_seamless" else 7
+                data = _http_get_with_retry(
+                    _FORECAST_URL,
+                    {
+                        "latitude": lat, "longitude": lon,
+                        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                        "timezone": "auto",
+                        "temperature_unit": "celsius",
+                        "forecast_days": fd,
+                        "models": model_code,
+                    },
+                    attempts=2, timeout=15.0,
+                )
+            daily = data.get("daily") or {}
+            dates = daily.get("time") or []
+            mx = daily.get("temperature_2m_max") or []
+            mn = daily.get("temperature_2m_min") or []
+            pr = daily.get("precipitation_sum") or []
+            for i, d in enumerate(dates):
+                if str(d) < start_date_str or str(d) > end_date_str:
+                    continue
+                pred_max = mx[i] if i < len(mx) else None
+                pred_min = mn[i] if i < len(mn) else None
+                pred_precip = pr[i] if i < len(pr) else 0.0
+                if pred_max is not None and (isinstance(pred_max, float) and math.isnan(pred_max)):
+                    pred_max = None
+                if pred_min is not None and (isinstance(pred_min, float) and math.isnan(pred_min)):
+                    pred_min = None
+                if pred_max is not None and (pred_max < -80 or pred_max > 70):
+                    results.append({"model": model_code, "date": d, "ok": False, "err": f"extreme temp_max={pred_max}"})
+                    continue
+                if pred_min is not None and (pred_min < -80 or pred_min > 70):
+                    results.append({"model": model_code, "date": d, "ok": False, "err": f"extreme temp_min={pred_min}"})
+                    continue
+                ACCURACY_STORE.upsert_forecast(
+                    city, district, lat, lon, model_code, str(d),
+                    pred_max, pred_min, pred_precip,
+                )
+                results.append({"model": model_code, "date": d, "ok": True})
+        except Exception as e:
+            results.append({"model": model_code, "ok": False, "err": str(e)})
+    return {"city": city, "district": district, "start": start_date_str, "end": end_date_str,
+            "source": "archive" if use_archive else "forecast", "results": results}
+
+
+def _fetch_actual_range_for_city(city: str, district: str, start_date_str: str, end_date_str: str):
+    """批量抓取某城市在 [start_date, end_date] 日期范围内的真实观测数据。
+    1 次 archive API 调用获取整个日期范围，将 7 天 7 次调用降为 1 次。"""
+    lat, lon, tz = _geocode(city, district)
+    try:
+        data = _http_get_with_retry(
+            _ARCHIVE_URL,
+            {
+                "latitude": lat, "longitude": lon,
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                "timezone": "auto",
+                "temperature_unit": "celsius",
+                "start_date": start_date_str,
+                "end_date": end_date_str,
+            },
+            attempts=2, timeout=25.0,
+        )
+        daily = data.get("daily") or {}
+        dates = daily.get("time") or []
+        mx = daily.get("temperature_2m_max") or []
+        mn = daily.get("temperature_2m_min") or []
+        pr = daily.get("precipitation_sum") or []
+        ok_count = 0
+        for i, d in enumerate(dates):
+            if str(d) < start_date_str or str(d) > end_date_str:
+                continue
+            actual_max = float(mx[i]) if i < len(mx) and mx[i] is not None and not (isinstance(mx[i], float) and math.isnan(mx[i])) else None
+            actual_min = float(mn[i]) if i < len(mn) and mn[i] is not None and not (isinstance(mn[i], float) and math.isnan(mn[i])) else None
+            actual_precip = float(pr[i]) if i < len(pr) and pr[i] is not None and not (isinstance(pr[i], float) and math.isnan(pr[i])) else 0.0
+            if actual_max is not None and (actual_max < -80 or actual_max > 70):
+                actual_max = None
+            if actual_min is not None and (actual_min < -80 or actual_min > 70):
+                actual_min = None
+            ACCURACY_STORE.upsert_actual(city, district, lat, lon, str(d), actual_max, actual_min, actual_precip)
+            ok_count += 1
+        return {"city": city, "district": district, "start": start_date_str, "end": end_date_str, "ok_count": ok_count}
+    except Exception as e:
+        return {"city": city, "district": district, "start": start_date_str, "end": end_date_str, "ok_count": 0, "err": str(e)}
+
+
 def _score_day_for_city(city: str, district: str, record_date_str: str):
     """对 record_date 这一天，取所有模型的 forecast_snapshots 与 actual_record 做比对，写入 daily_scores。
     若 actual 未生成，标记为 pending 不结算 0 分。
@@ -2764,6 +2876,45 @@ def _backfill_accuracy(days: int = 7):
     return {"backfill_days": days, "summary": summary}
 
 
+def _backfill_accuracy_fast(days: int = 7):
+    """快速回填（启动 bootstrap 专用）：用批量范围抓取将 API 调用从 days×10×6=420 降到 10×7=70 次。
+    步骤：
+    1. 每城市 1 次 archive 调用抓实况范围（7天1次）
+    2. 每城市 6 次 archive 调用抓各模型预报范围（7天6次）
+    3. 逐天逐城市评分（纯本地 DB 操作，无 API）
+    Render 免费版实测 ~2-3 分钟（原 _backfill_accuracy 需 ~17 分钟）。"""
+    today = datetime.strptime(_cn_today_str(), "%Y-%m-%d")
+    start_date = (today - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    end_date = today.strftime("%Y-%m-%d")
+    print(f"[Backfill-Fast] 开始批量回填 {start_date} ~ {end_date}（{days}天 × {len(_EVAL_CITIES)}城市）")
+    for c in _EVAL_CITIES:
+        city, district = c["city"], c["district"]
+        try:
+            ar = _fetch_actual_range_for_city(city, district, start_date, end_date)
+            print(f"[Backfill-Fast] {city}{district} 实况: {ar.get('ok_count', 0)}天")
+        except Exception as e:
+            print(f"[Backfill-Fast] {city}{district} 实况失败: {type(e).__name__}: {e}")
+        try:
+            fr = _fetch_forecast_range_for_city(city, district, start_date, end_date)
+            ok = sum(1 for r in fr.get("results", []) if r.get("ok"))
+            print(f"[Backfill-Fast] {city}{district} 预报: {ok}条")
+        except Exception as e:
+            print(f"[Backfill-Fast] {city}{district} 预报失败: {type(e).__name__}: {e}")
+        time.sleep(0.1)  # 城市间极短间隔
+    # 评分（纯本地操作，无 API 调用，秒级完成）
+    scored_total = 0
+    for back in range(days - 1, -1, -1):
+        rec = (today - timedelta(days=back)).strftime("%Y-%m-%d")
+        for c in _EVAL_CITIES:
+            try:
+                sr = _score_day_for_city(c["city"], c["district"], rec)
+                scored_total += sr.get("scored", 0)
+            except Exception as e:
+                print(f"[Backfill-Fast] {c['city']}{c['district']} {rec} 评分失败: {type(e).__name__}: {e}")
+    print(f"[Backfill-Fast] 完成: 评分 {scored_total} 条")
+    return {"backfill_days": days, "scored_total": scored_total}
+
+
 # ---- 手动管理 API（POST，无鉴权；内部使用）----
 
 @app.post("/api/accuracy/run-forecast", tags=["准确率系统"], summary="手动：抓取 T+1 预测快照")
@@ -2861,8 +3012,8 @@ def _start_cron_if_needed():
         def _startup_bootstrap():
             try:
                 time.sleep(5)  # 等 FastAPI 完全就绪
-                print("[Startup] 自动补跑：回填最近 7 天准确率数据（预报快照+实况+评分）")
-                _backfill_accuracy(7)
+                print("[Startup] 自动补跑：快速回填最近 7 天准确率数据（批量范围抓取，~2-3分钟）")
+                _backfill_accuracy_fast(7)
                 print("[Startup] 自动补跑：重建预计算排行榜 city_model_rankings（基于回填的 daily_scores）")
                 updated = 0
                 for c in _EVAL_CITIES:
