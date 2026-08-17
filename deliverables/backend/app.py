@@ -1313,8 +1313,11 @@ def _load_data():
 
 @app.on_event("startup")
 def _on_startup_load_data():
-    """应用启动时从 JSON 文件加载持久化数据"""
+    """应用启动时从 JSON 文件加载持久化数据，并启动准确率 cron 线程。
+    注意：Render 用 uvicorn app:app 启动，不会执行 if __name__ == "__main__" 块，
+    所以 cron 必须在这里启动，否则排行榜预计算任务永远不会运行。"""
     _load_data()
+    _start_cron_if_needed()
 
 
 # ---- LLM 相关辅助函数 ----
