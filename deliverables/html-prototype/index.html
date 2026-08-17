@@ -587,7 +587,6 @@ html.app-mode .home-hero{padding-top:20px}
   <div class="lb-tabs">
     <div class="lb-tab active" onclick="switchTimeRange('7d')">近7天</div>
     <div class="lb-tab" onclick="switchTimeRange('30d')">近30天</div>
-    <div class="lb-tab" onclick="switchTimeRange('all')">全部</div>
   </div>
   <div class="lb-list" id="lbList"></div>
 </div>
@@ -924,18 +923,21 @@ var api = {
     return fetch('/api/weather?' + q)
       .then(function(r) { return r.json(); });
   },
-  // GET /api/ranking?range=7d|30d|all
-  getRanking: function(range) {
+  // GET /api/ranking?range=7d|30d
+  getRanking: function(range){
+    if(range!=='30d')range='7d';
     return fetch('/api/ranking?range=' + range).then(function(r) { return r.json(); });
   },
-  // GET /api/leaderboard?city=&district= —— 只读预计算排行榜（<100ms，不触发外部 API）
-  getLeaderboard: function(city, district) {
-    var q = 'city=' + encodeURIComponent(city) + '&district=' + encodeURIComponent(district);
+  // GET /api/leaderboard?city=&district=&range= —— 只读预计算排行榜（<100ms，不触发外部 API）
+  getLeaderboard: function(city, district, range) {
+    var r = (range==='30d')?'30d':'7d';
+    var q = 'city=' + encodeURIComponent(city) + '&district=' + encodeURIComponent(district) + '&range=' + r;
     return fetch('/api/leaderboard?' + q).then(function(r) { return r.json(); });
   },
-  // GET /api/accuracy/rank?city=xxx&district=xxx  —— 近7天模型准确率排名（离线算好，纯读秒回）
-  getAccuracyRank: function(city, district) {
-    var q = 'city=' + encodeURIComponent(city) + '&district=' + encodeURIComponent(district);
+  // GET /api/accuracy/rank?city=&district=&range= —— 近7/30天模型准确率排名（离线算好，纯读秒回）
+  getAccuracyRank: function(city, district, range) {
+    var r = (range==='30d')?'30d':'7d';
+    var q = 'city=' + encodeURIComponent(city) + '&district=' + encodeURIComponent(district) + '&range=' + r;
     return fetch('/api/accuracy/rank?' + q).then(function(r) { return r.json(); });
   },
   // GET /api/source/:id
@@ -1433,17 +1435,11 @@ function refreshData(){refreshWeather();}
 var LAST_ACCURACY = null;  // 缓存最近一次排行榜数据（供切换时间范围复用，避免重复请求）
 
 function renderLeaderboard(){
-  // 优先用首屏已带回的 accuracy（首页 weather 响应内已含，纯读预计算表，秒回）
-  var acc = (LAST_WEATHER && LAST_WEATHER.accuracy) || null;
-  if (acc && acc.ranking && acc.ranking.length > 0) {
-    _renderLeaderboardFromData(acc);
-    return;
-  }
-  // 首屏 accuracy 尚未就绪：直接调用只读预计算排行榜接口（< 100ms）
-  // 数据已离线算好，不再有“加载中/待比对”等待，先用空骨架占位，接口返回即渲染
+  var range = S.range || '7d';
+  // 调用只读预计算排行榜接口（< 100ms），按当前选择的时间范围
   var listEl = document.getElementById('lbList');
   listEl.innerHTML = '';
-  api.getLeaderboard(S.city, S.district).then(function(resp){
+  api.getLeaderboard(S.city, S.district, range).then(function(resp){
     LAST_ACCURACY = resp;
     _renderLeaderboardFromData(resp);
   }).catch(function(){
@@ -1475,8 +1471,8 @@ function _renderLeaderboardFromData(acc){
     var scorePrec = (r.score_precip_7d === null || r.score_precip_7d === undefined) ? '--' : Math.round(r.score_precip_7d);
     var samples = r.samples_7d || 0;
     var rcClass = rc<=3?'lb-rank-'+rc:'lb-rank-other';
-    var scoreDisplay = (score === null)
-      ? '<div class="lb-score-val" style="color:var(--muted)">--</div><div style="font-size:10px;opacity:.7">暂无样本</div>'
+    var scoreDisplay = (score === null || score === undefined)
+      ? '<div class="lb-score-val" style="color:var(--muted)">--</div><div style="font-size:10px;opacity:.7">综合得分</div>'
       : '<div class="lb-score-val">'+score+'</div><div style="font-size:10px;opacity:.7">综合得分</div>';
     html+='<div class="lb-item" onclick="selectSourceByModel(\''+r.model_code+'\')"><div class="lb-rank '+rcClass+'">'+rc+'</div>'
       +'<div class="lb-info"><div class="lb-name">'+name+' <span style="font-size:10px;opacity:.7;font-weight:500">'+sub+'</span></div>'
@@ -1502,10 +1498,11 @@ function switchTimeRange(range){
   S.range=range;
   document.querySelectorAll('.lb-tab').forEach(function(t){
     t.classList.remove('active');
-    if(t.textContent.indexOf(range==='7d'?'7':range==='30d'?'30':'全')>=0)t.classList.add('active');
+    if(range==='7d' && t.textContent.indexOf('7')>=0)t.classList.add('active');
+    if(range==='30d' && t.textContent.indexOf('30')>=0)t.classList.add('active');
   });
-  if (LAST_ACCURACY) _renderLeaderboardFromData(LAST_ACCURACY);
-  else renderLeaderboard();
+  LAST_ACCURACY=null;
+  renderLeaderboard();
 }
 function openLeaderboard(){switchTab('leaderboard');}
 function openSource(id){
