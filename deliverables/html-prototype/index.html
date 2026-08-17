@@ -408,29 +408,6 @@ html.app-mode .home-hero{padding-top:20px}
 .loading-error-title{font-size:16px;font-weight:700;color:var(--text-primary);margin-bottom:8px}
 .loading-error-msg{font-size:13px;color:var(--text-secondary);line-height:1.5;margin-bottom:16px}
 .loading-retry-btn{background:var(--accent);color:#fff;border:none;border-radius:var(--r-md);padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer}
-/* AI Weather Button */
-.ai-weather-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);color:#fff;padding:8px 18px;border-radius:var(--r-full);font-size:13px;font-weight:600;cursor:pointer;margin-top:14px;backdrop-filter:blur(10px);transition:background 0.2s,transform 0.15s}
-.ai-weather-btn:hover{background:rgba(255,255,255,0.3)}
-.ai-weather-btn:active{transform:scale(0.95)}
-.ai-weather-btn svg{width:16px;height:16px}
-
-/* AI Loading Overlay */
-.ai-loading-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(135deg,#F0F5FA 0%,#DBEAFE 50%,#E0E7FF 100%);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:500;border-radius:44px}
-.ai-loading-overlay.show{display:flex}
-.ai-loading-circle{position:relative;width:100px;height:100px;display:flex;align-items:center;justify-content:center}
-.ai-loading-ring{position:absolute;width:100%;height:100%;border:3px solid transparent;border-top-color:var(--accent);border-right-color:var(--accent);border-radius:50%;animation:ai-spin 1s linear infinite}
-.ai-loading-ring-2{position:absolute;width:78%;height:78%;border:2px solid transparent;border-bottom-color:#8B5CF6;border-left-color:#8B5CF6;border-radius:50%;animation:ai-spin-rev 1.5s linear infinite}
-@keyframes ai-spin{to{transform:rotate(360deg)}}
-@keyframes ai-spin-rev{to{transform:rotate(-360deg)}}
-.ai-loading-icon{width:40px;height:40px;animation:ai-pulse 1.5s ease-in-out infinite}
-@keyframes ai-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.15);opacity:0.7}}
-.ai-loading-text{margin-top:28px;font-size:15px;font-weight:600;color:var(--text-primary)}
-.ai-loading-dots{display:inline-flex;gap:3px;margin-left:2px}
-.ai-loading-dots span{width:5px;height:5px;background:var(--accent);border-radius:50%;animation:ai-dot 1.4s infinite ease-in-out}
-.ai-loading-dots span:nth-child(2){animation-delay:0.2s}
-.ai-loading-dots span:nth-child(3){animation-delay:0.4s}
-@keyframes ai-dot{0%,80%,100%{opacity:0.3;transform:scale(0.8)}40%{opacity:1;transform:scale(1.2)}}
-.ai-loading-sub{margin-top:10px;font-size:12px;color:var(--text-secondary)}
 /* Status bar padding */
 #screen-leaderboard,#screen-source-detail,#screen-community,#screen-feed-detail,#screen-location,#screen-notifications{padding-top:var(--sb-h)}
 .home-hero{padding-top:calc(var(--sb-h) + 4px)}
@@ -529,16 +506,6 @@ html.app-mode .home-hero{padding-top:20px}
     <button class="loading-retry-btn" onclick="initData._retried=false;initData()">重新加载</button>
   </div>
 </div>
-<!-- AI Loading Overlay -->
-<div class="ai-loading-overlay" id="aiLoadingOverlay">
-  <div class="ai-loading-circle">
-    <div class="ai-loading-ring"></div>
-    <div class="ai-loading-ring-2"></div>
-    <svg class="ai-loading-icon" viewBox="0 0 64 64"><path d="M20 42c-5 0-9-4-9-9s4-9 9-9c0-6 5-11 11-11s11 5 11 11c4 0 7 3 7 7s-3 7-7 7H20z" fill="#3B82F6"/></svg>
-  </div>
-  <div class="ai-loading-text">AI 正在分析天气数据<span class="ai-loading-dots"><span></span><span></span><span></span></span></div>
-  <div class="ai-loading-sub">正在调用大模型生成智能预报</div>
-</div>
 <!-- Status Bar -->
 <div class="status-bar status-light" id="statusBar">
   <span class="status-time" id="statusTime">14:13</span>
@@ -587,10 +554,6 @@ html.app-mode .home-hero{padding-top:20px}
       </div>
       <div class="weather-metrics" id="homeMetrics"></div>
       <div class="weather-update" id="homeUpdate"></div>
-      <button class="ai-weather-btn" onclick="callAIWeather()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l1.5 5L19 8.5 13.5 10 12 15l-1.5-5L5 8.5 10.5 7z"/><path d="M5 19l.7 2L8 21.7 6 22l-.7 2L4.5 22 2.5 21.7 4 21z"/><path d="M19 14l.5 1.5L21 16l-1.5.5L19 18l-.5-1.5L17 16l1.5-.5z"/></svg>
-        AI 智能预报
-      </button>
     </div>
   </div>
   <div class="home-cards">
@@ -965,6 +928,11 @@ var api = {
   getRanking: function(range) {
     return fetch('/api/ranking?range=' + range).then(function(r) { return r.json(); });
   },
+  // GET /api/leaderboard?city=&district= —— 只读预计算排行榜（<100ms，不触发外部 API）
+  getLeaderboard: function(city, district) {
+    var q = 'city=' + encodeURIComponent(city) + '&district=' + encodeURIComponent(district);
+    return fetch('/api/leaderboard?' + q).then(function(r) { return r.json(); });
+  },
   // GET /api/accuracy/rank?city=xxx&district=xxx  —— 近7天模型准确率排名（离线算好，纯读秒回）
   getAccuracyRank: function(city, district) {
     var q = 'city=' + encodeURIComponent(city) + '&district=' + encodeURIComponent(district);
@@ -1044,14 +1012,6 @@ var api = {
       .then(function(r) {
         return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; });
       });
-  },
-  // POST /api/ai-weather -> { cond, temp, humid, wind, aqi, desc, feel, ai_generated }
-  aiWeather: function(city, district) {
-    return fetch('/api/ai-weather', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ city: city, district: district })
-    }).then(function(r) { return r.json(); });
   },
   // GET /api/reverse-geocode?lat=&lon= -> { city, district, lat, lon }
   reverseGeocode: function(lat, lon) {
@@ -1372,25 +1332,21 @@ function updateWeatherDisplay(w){
   }
   document.getElementById('dailyList').innerHTML=dl;
 
-  // Home rank preview：取 accuracy 前 3 名，无数据就按 ENGINE_SOURCES 前 3 占位
+  // Home rank preview：取 accuracy 前 3 名（数据来自预计算表，无“待比对/采集中”等待态）
   var acc=(LAST_WEATHER&&LAST_WEATHER.accuracy)||{};
   var rankList=acc.ranking||[];
   var rphtml='';
-  if(rankList.length>0){
-    var show=rankList.slice(0,3);
-    show.forEach(function(r,i){
-      var eng=getEngineByModel(r.model_code);
-      var n=eng?eng.name:r.display_name||r.model_code;
-      var score = (r.score_daily_7d === null || r.score_daily_7d === undefined) ? null : Math.round(r.score_daily_7d);
-      var scoreText = (score === null) ? '<span style="font-size:12px;font-weight:500;color:var(--muted)">待比对</span>' : '<span style="font-size:14px;font-weight:700;color:var(--accent)">'+score+'分</span>';
-      rphtml+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0'+(i<2?';border-bottom:1px solid var(--border)':'')+'"><div class="lb-rank lb-rank-'+(i+1)+'">'+(i+1)+'</div><span style="flex:1;font-size:13px;font-weight:600">'+n+'</span>'+scoreText+'</div>';
-    });
-  }else{
-    var tops=ENGINE_SOURCES.slice(0,3);
-    tops.forEach(function(e,i){
-      rphtml+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0'+(i<2?';border-bottom:1px solid var(--border)':'')+'"><div class="lb-rank lb-rank-'+(i+1)+'">'+(i+1)+'</div><span style="flex:1;font-size:13px;font-weight:600">'+e.name+'</span><span style="font-size:12px;font-weight:500;color:var(--muted)">准确率采集中</span></div>';
-    });
-  }
+  // 后端已保证 ranking 至少回退到基准站数据；防御性兜底：取前 3，缺数据用“--”占位
+  var show = rankList.length>0 ? rankList.slice(0,3) : ENGINE_SOURCES.slice(0,3).map(function(e){return {model_code:e.model, display_name:e.name, score_daily_7d:null};});
+  show.forEach(function(r,i){
+    var eng=getEngineByModel(r.model_code);
+    var n=eng?eng.name:(r.display_name||r.model_code);
+    var score = (r.score_daily_7d === null || r.score_daily_7d === undefined) ? null : Math.round(r.score_daily_7d);
+    var scoreText = (score === null)
+      ? '<span style="font-size:12px;font-weight:500;color:var(--muted)">--</span>'
+      : '<span style="font-size:14px;font-weight:700;color:var(--accent)">'+score+'分</span>';
+    rphtml+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0'+(i<2?';border-bottom:1px solid var(--border)':'')+'"><div class="lb-rank lb-rank-'+(i+1)+'">'+(i+1)+'</div><span style="flex:1;font-size:13px;font-weight:600">'+n+'</span>'+scoreText+'</div>';
+  });
   document.getElementById('homeRankPreview').innerHTML=rphtml;
   renderSourceSelector();
 }
@@ -1455,31 +1411,6 @@ function selectSource(id){
   });
 }
 
-// ===== AI Weather =====
-function callAIWeather(){
-  // Show loading overlay
-  document.getElementById('aiLoadingOverlay').classList.add('show');
-  // Call backend AI weather endpoint
-  api.aiWeather(S.city,S.district)
-    .then(function(data){
-      // Hide loading overlay
-      document.getElementById('aiLoadingOverlay').classList.remove('show');
-      // Update weather display with AI data
-      try{ updateWeatherDisplay(data); }catch(e){ console.error('AI weather display error:',e); }
-      // Show toast
-      if(data.ai_generated){
-        showToast('AI 天气数据已生成');
-      }else{
-        showToast(data.ai_message||'AI 生成失败，已返回实时观测数据');
-      }
-    })
-    .catch(function(err){
-      document.getElementById('aiLoadingOverlay').classList.remove('show');
-      showToast('AI 生成失败，请稍后重试');
-      console.error('AI weather error:',err);
-    });
-}
-
 // ===== Refresh =====
 function refreshWeather(btn){
   if(!btn)btn=document.getElementById('homeRefreshBtn');
@@ -1502,59 +1433,55 @@ function refreshData(){refreshWeather();}
 var LAST_ACCURACY = null;  // 缓存最近一次排行榜数据（供切换时间范围复用，避免重复请求）
 
 function renderLeaderboard(){
-  // 优先用首屏已带回的 accuracy（首页 weather 响应内已含，已随缓存秒回）
+  // 优先用首屏已带回的 accuracy（首页 weather 响应内已含，纯读预计算表，秒回）
   var acc = (LAST_WEATHER && LAST_WEATHER.accuracy) || null;
   if (acc && acc.ranking && acc.ranking.length > 0) {
     _renderLeaderboardFromData(acc);
     return;
   }
-  // 否则独立请求排行榜接口（离线算好，纯读 ~0.2s，不再等首屏实时天气抓取）
+  // 首屏 accuracy 尚未就绪：直接调用只读预计算排行榜接口（< 100ms）
+  // 数据已离线算好，不再有“加载中/待比对”等待，先用空骨架占位，接口返回即渲染
   var listEl = document.getElementById('lbList');
-  listEl.innerHTML = '<div style="padding:28px 16px;text-align:center;color:var(--muted);font-size:13px">准确率排名加载中…</div>';
-  api.getAccuracyRank(S.city, S.district).then(function(resp){
+  listEl.innerHTML = '';
+  api.getLeaderboard(S.city, S.district).then(function(resp){
     LAST_ACCURACY = resp;
     _renderLeaderboardFromData(resp);
   }).catch(function(){
-    listEl.innerHTML = '<div style="padding:28px 16px;text-align:center;color:var(--muted);font-size:13px">准确率数据暂不可用，请稍后重试</div>';
+    _renderLeaderboardFromData(null);
   });
 }
 
-// 根据排行榜数据渲染列表（与数据来源解耦：首屏 accuracy 或独立 rank 接口均可）
+// 根据排行榜数据渲染列表（与数据来源解耦：首屏 accuracy 或独立 leaderboard 接口均可）
+// 设计原则：数据均来自后端预计算表，已离线算好；前端不再出现“待比对 / 加载中 / 采集中”等等待态，
+// 单模型缺样本时用中性占位“--”表示，而非“待比对”。
 function _renderLeaderboardFromData(acc){
   var rankList = (acc && acc.ranking) || [];
   var html='';
   var i,rc,name,sub,score,displayName;
-  if(rankList.length>0){
-    // 有真实准确率数据：按后端返回顺序渲染
-    for(i=0;i<rankList.length;i++){
-      var r=rankList[i];
-      rc=r.rank||(i+1);
-      displayName=r.display_name||r.model_code;
-      var eng=getEngineByModel(r.model_code);
-      name=eng?eng.name:displayName;
-      sub=eng?eng.sub:r.model_code;
-      score = (r.score_daily_7d === null || r.score_daily_7d === undefined) ? null : Math.round(r.score_daily_7d);
-      var scoreTemp = (r.score_temp_7d === null || r.score_temp_7d === undefined) ? '--' : Math.round(r.score_temp_7d);
-      var scorePrec = (r.score_precip_7d === null || r.score_precip_7d === undefined) ? '--' : Math.round(r.score_precip_7d);
-      var samples = r.samples_7d || 0;
-      var rcClass = rc<=3?'lb-rank-'+rc:'lb-rank-other';
-      var scoreDisplay = (score === null) ? '<div class="lb-score-val" style="color:var(--muted)">待比对</div>' : '<div class="lb-score-val">'+score+'</div><div style="font-size:10px;opacity:.7">综合得分</div>';
-      html+='<div class="lb-item" onclick="selectSourceByModel(\''+r.model_code+'\')"><div class="lb-rank '+rcClass+'">'+rc+'</div>'
-        +'<div class="lb-info"><div class="lb-name">'+name+' <span style="font-size:10px;opacity:.7;font-weight:500">'+sub+'</span></div>'
-        +'<div class="lb-desc">温度 '+scoreTemp+'分 · 降水 '+scorePrec+'分 · '+samples+'天样本</div></div>'
-        +'<div class="lb-score">'+scoreDisplay+'</div></div>';
-    }
-  }else{
-    // 无数据：按引擎默认顺序渲染（占位）
-    for(i=0;i<ENGINE_SOURCES.length;i++){
-      var e=ENGINE_SOURCES[i];
-      rc=i+1;
-      var rcClass=rc<=3?'lb-rank-'+rc:'lb-rank-other';
-      html+='<div class="lb-item" onclick="selectSource(\''+e.id+'\')"><div class="lb-rank '+rcClass+'">'+rc+'</div>'
-        +'<div class="lb-info"><div class="lb-name">'+e.name+' <span style="font-size:10px;opacity:.7;font-weight:500">'+e.sub+'</span></div>'
-        +'<div class="lb-desc">'+e.model+' · 准确率数据采集中</div></div>'
-        +'<div class="lb-score"><div class="lb-score-val">--</div><div style="font-size:10px;opacity:.7">综合得分</div></div></div>';
-    }
+  // 若当前城市无预计算数据且基准站也无（全新部署未跑批），后端会返回空 ranking，
+  // 此时按引擎默认顺序兜底渲染，分数用“--”占位（不展示“待比对/加载中”）。
+  var list = rankList.length>0 ? rankList : ENGINE_SOURCES.map(function(e,i){
+    return {model_code:e.model, rank:i+1, display_name:e.name, score_daily_7d:null, score_temp_7d:null, score_precip_7d:null, samples_7d:0};
+  });
+  for(i=0;i<list.length;i++){
+    var r=list[i];
+    rc=r.rank||(i+1);
+    displayName=r.display_name||r.model_code;
+    var eng=getEngineByModel(r.model_code);
+    name=eng?eng.name:displayName;
+    sub=eng?eng.sub:r.model_code;
+    score = (r.score_daily_7d === null || r.score_daily_7d === undefined) ? null : Math.round(r.score_daily_7d);
+    var scoreTemp = (r.score_temp_7d === null || r.score_temp_7d === undefined) ? '--' : Math.round(r.score_temp_7d);
+    var scorePrec = (r.score_precip_7d === null || r.score_precip_7d === undefined) ? '--' : Math.round(r.score_precip_7d);
+    var samples = r.samples_7d || 0;
+    var rcClass = rc<=3?'lb-rank-'+rc:'lb-rank-other';
+    var scoreDisplay = (score === null)
+      ? '<div class="lb-score-val" style="color:var(--muted)">--</div><div style="font-size:10px;opacity:.7">暂无样本</div>'
+      : '<div class="lb-score-val">'+score+'</div><div style="font-size:10px;opacity:.7">综合得分</div>';
+    html+='<div class="lb-item" onclick="selectSourceByModel(\''+r.model_code+'\')"><div class="lb-rank '+rcClass+'">'+rc+'</div>'
+      +'<div class="lb-info"><div class="lb-name">'+name+' <span style="font-size:10px;opacity:.7;font-weight:500">'+sub+'</span></div>'
+      +'<div class="lb-desc">温度 '+scoreTemp+'分 · 降水 '+scorePrec+'分 · '+samples+'天样本</div></div>'
+      +'<div class="lb-score">'+scoreDisplay+'</div></div>';
   }
   document.getElementById('lbList').innerHTML=html;
 }

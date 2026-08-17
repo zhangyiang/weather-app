@@ -16,7 +16,6 @@ import time
 import random
 import copy
 import json
-import hashlib
 import os
 import re
 import math
@@ -592,6 +591,21 @@ _SCORED_MODELS = [
     "meteofrance_seamless",
 ]
 
+# model_code -> 前端展示用的引擎中文名（与 _ENGINE_MODELS / ENGINE_SOURCES 对齐）
+_MODEL_DISPLAY_NAMES = {
+    "best_match": "智能综合",
+    "ecmwf_ifs025": "苹果/三星",
+    "gfs_seamless": "微软/Google",
+    "icon_seamless": "Windy/DWD",
+    "jma_seamless": "日本气象厅",
+    "cma_gfs": "中国气象局",
+    "cma_grapes_global": "中国气象局",  # 兼容旧数据
+    "meteofrance_seamless": "法国高精",
+}
+
+# 全国基准站：当定位城市无预计算排名时，回退使用此城市的排名
+_BASELINE_CITY = {"city": "北京", "district": "朝阳区"}
+
 # 需要抓取的核心城市（每日跑批的对象）——覆盖热门城市 + 区县级精度
 _EVAL_CITIES = [
     {"city": "北京", "district": "朝阳区"},
@@ -617,6 +631,7 @@ class AccuracyStore:
         self._forecasts = {}   # key: (city, district, date_str, model) -> row
         self._actuals = {}     # key: (city, district, date_str) -> row
         self._scores = {}      # key: (city, district, date_str, model) -> row
+        self._rankings = {}    # key: (city, district) -> [ranking rows]
         self._init_db()
 
     def _connect(self):
@@ -683,6 +698,24 @@ class AccuracyStore:
                         score_daily DECIMAL(6,2),
                         created_at BIGINT NOT NULL,
                         UNIQUE KEY uk_score (city, district, record_date, model_code)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 预计算汇总表：离线任务写入，前端排行榜只读此表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS city_model_rankings (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        city VARCHAR(50) NOT NULL,
+                        district VARCHAR(50) NOT NULL,
+                        model_code VARCHAR(50) NOT NULL,
+                        score_7d DECIMAL(6,2) NOT NULL,
+                        score_temp_7d DECIMAL(6,2),
+                        score_precip_7d DECIMAL(6,2),
+                        samples_7d INT DEFAULT 0,
+                        rank INT NOT NULL,
+                        updated_at BIGINT NOT NULL,
+                        UNIQUE KEY uk_city_model (city, district, model_code)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
@@ -914,8 +947,141 @@ class AccuracyStore:
             "best_score": best["score_daily_7d"] if best and best["score_daily_7d"] is not None else 0.0,
         }
 
+    # ----- 预计算排名表 city_model_rankings -----
+    def upsert_city_ranking(self, city, district, model_code, score_7d, score_temp_7d, score_precip_7d, samples_7d, rank):
+        """写入/更新预计算排名行（离线任务调用）"""
+        ts = _now_ms()
+        if self.mode == "mysql":
+            try:
+                conn = self._connect()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO city_model_rankings
+                          (city,district,model_code,score_7d,score_temp_7d,score_precip_7d,samples_7d,rank,updated_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON DUPLICATE KEY UPDATE
+                          score_7d=VALUES(score_7d),score_temp_7d=VALUES(score_temp_7d),
+                          score_precip_7d=VALUES(score_precip_7d),samples_7d=VALUES(samples_7d),
+                          rank=VALUES(rank),updated_at=VALUES(updated_at)
+                        """,
+                        (city, district, model_code,
+                         float(score_7d), float(score_temp_7d) if score_temp_7d is not None else None,
+                         float(score_precip_7d) if score_precip_7d is not None else None,
+                         int(samples_7d), int(rank), ts),
+                    )
+                    conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"[Accuracy] upsert_city_ranking mysql err: {e}")
+        # 内存
+        key = (city, district)
+        if key not in self._rankings:
+            self._rankings[key] = {}
+        self._rankings[key][model_code] = {
+            "city": city, "district": district, "model_code": model_code,
+            "score_7d": float(score_7d), "score_temp_7d": float(score_temp_7d) if score_temp_7d is not None else None,
+            "score_precip_7d": float(score_precip_7d) if score_precip_7d is not None else None,
+            "samples_7d": int(samples_7d), "rank": int(rank), "updated_at": ts,
+        }
+
+    def get_city_rankings(self, city, district):
+        """读取预计算排名（前端排行榜只读此表，不触发任何外部 API）。"""
+        if self.mode == "mysql":
+            try:
+                conn = self._connect()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM city_model_rankings WHERE city=%s AND district=%s ORDER BY rank ASC",
+                        (city, district),
+                    )
+                    rows = cur.fetchall() or []
+                conn.close()
+                if rows:
+                    return rows
+            except Exception:
+                pass
+        # 内存
+        key = (city, district)
+        d = self._rankings.get(key, {})
+        return sorted(d.values(), key=lambda r: r["rank"])
+
 
 ACCURACY_STORE = AccuracyStore(APP_CONFIG["mysql"])
+
+
+# =====================================================================
+# 排行榜只读助手：仅查询预计算表 city_model_rankings（不触发任何外部 API / 不算分）
+# 设计目标：前端 GET /api/leaderboard 与 /api/weather 内的 accuracy 字段都走这里，
+#          保证接口响应 < 100ms，并彻底消除“待比对 / 加载中”等待状态。
+# =====================================================================
+
+def _format_ranking_rows(rows, city, district, fallback=False, baseline_city=None):
+    """把 city_model_rankings 行格式化为前端 ranking 结构（与 rolling_7day_rank 输出兼容）。
+    - score_7d -> score_daily_7d（前端字段名）
+    - 附带 display_name（引擎中文名）
+    - 缺失模型自动补占位行（score=null，保证 6 个模型齐全）
+    返回 ranking list。"""
+    by_model = {r.get("model_code"): r for r in rows} if rows else {}
+    ranking = []
+    for m in _SCORED_MODELS:
+        r = by_model.get(m)
+        if r:
+            ranking.append({
+                "model_code": m,
+                "score_daily_7d": float(r["score_7d"]) if r.get("score_7d") is not None else None,
+                "score_temp_7d": float(r["score_temp_7d"]) if r.get("score_temp_7d") is not None else None,
+                "score_precip_7d": float(r["score_precip_7d"]) if r.get("score_precip_7d") is not None else None,
+                "samples_7d": int(r.get("samples_7d") or 0),
+                "rank": int(r.get("rank") or 0),
+                "display_name": _MODEL_DISPLAY_NAMES.get(m, m),
+            })
+        else:
+            # 该模型在预计算表中无记录：置 null（前端会以占位分渲染，不显示“待比对”）
+            ranking.append({
+                "model_code": m,
+                "score_daily_7d": None,
+                "score_temp_7d": None,
+                "score_precip_7d": None,
+                "samples_7d": 0,
+                "rank": 0,
+                "display_name": _MODEL_DISPLAY_NAMES.get(m, m),
+            })
+    # 按 rank 升序；rank=0 的未结算行排最后
+    ranking.sort(key=lambda x: (x["rank"] == 0, x["rank"]))
+    # 重新编秩，保证 1..6 连续
+    for i, r in enumerate(ranking):
+        r["rank"] = i + 1
+    best = ranking[0] if ranking else None
+    return {
+        "city": city,
+        "district": district,
+        "period": "近7天",
+        "ranking": ranking,
+        "best_model": best["model_code"] if best and best["score_daily_7d"] is not None else None,
+        "best_score": best["score_daily_7d"] if best and best["score_daily_7d"] is not None else 0.0,
+        "fallback": fallback,
+        "baseline_city": baseline_city,
+        "updated_at": max([int(r.get("updated_at") or 0) for r in rows], default=0) if rows else 0,
+    }
+
+
+def _get_city_rankings_with_fallback(city, district):
+    """只读预计算表 city_model_rankings：
+    1. 优先返回当前城市的预计算排名；
+    2. 若当前城市无数据（新定位城市），回退到全国基准站（北京朝阳区）的预计算排名；
+    3. 若基准站也无数据（全新部署未跑批），返回空 ranking 但不抛错——前端按占位分渲染。
+    全程不触发任何外部 API、不算分，响应 < 100ms。"""
+    rows = ACCURACY_STORE.get_city_rankings(city, district)
+    if rows:
+        return _format_ranking_rows(rows, city, district, fallback=False)
+    # 回退到基准站
+    b = _BASELINE_CITY
+    base_rows = ACCURACY_STORE.get_city_rankings(b["city"], b["district"])
+    if base_rows:
+        return _format_ranking_rows(base_rows, city, district, fallback=True, baseline_city=b["city"] + b["district"])
+    # 全新部署：返回空 ranking 占位（不展示“待比对”，由前端渲染占位分）
+    return _format_ranking_rows([], city, district, fallback=True, baseline_city=b["city"] + b["district"])
 
 
 # =====================================================================
@@ -1638,9 +1804,11 @@ def get_weather(
 ):
     """根据城市和区域返回真实天气数据（Open-Meteo）+ 多模型准确率比对结果。
 
-    返回值附带 accuracy 字段，包含：
-      - best_recommended_model / best_recommended_score / best_recommended: 是否该模型是近7天最优
-      - ranking：6 个真实数值模型近 7 天的综合得分排名（可画柱状图/折线图）
+    accuracy 字段说明：
+      - 只读预计算表 city_model_rankings（离线 03:00 跑批生成），不在请求链路算分；
+      - best_recommended_model / best_recommended_score / best_recommended: 近7天最优模型；
+      - ranking：6 个真实数值模型近 7 天的综合得分排名；
+      - 新定位城市无数据时自动回退全国基准站排名，绝不返回“待比对/加载中”。
     """
     _cache_key = f"{city}|{district}|{source}"
     _cached = _weather_cache_get(_cache_key)
@@ -1654,38 +1822,27 @@ def get_weather(
         result["real_data"] = False
         result["fallback_reason"] = str(e)
 
-    # 附带准确率排名（若数据不足则返回空 ranking 与 best_recommended=False）
+    # 附带准确率排名：只读预计算表（< 100ms，不触发外部 API / 不算分）
     try:
-        today_str = _cn_today_str()
-        rank = ACCURACY_STORE.rolling_7day_rank(city, district, today_str)
+        rank = _get_city_rankings_with_fallback(city, district)
         best_model = rank.get("best_model")
         current_model = result.get("model") or "best_match"
-        # 把 model_code 映射成引擎中文名（前端显示用），与 _ENGINE_MODELS / ENGINE_SOURCES 对齐
-        code_to_name = {
-            "best_match": "智能综合",
-            "ecmwf_ifs025": "苹果/三星",
-            "gfs_seamless": "微软/Google",
-            "icon_seamless": "Windy/DWD",
-            "jma_seamless": "日本气象厅",
-            "cma_gfs": "中国气象局",
-            "cma_grapes_global": "中国气象局",  # 兼容旧数据
-            "meteofrance_seamless": "法国高精",
-        }
-        for r in rank["ranking"]:
-            r["display_name"] = code_to_name.get(r["model_code"], r["model_code"])
         accuracy = {
             "city": rank["city"],
             "district": rank["district"],
             "period": rank["period"],
             "best_recommended_model": best_model,
-            "best_recommended_model_name": code_to_name.get(best_model, best_model) if best_model else None,
+            "best_recommended_model_name": _MODEL_DISPLAY_NAMES.get(best_model, best_model) if best_model else None,
             "best_recommended_score": rank.get("best_score", 0.0),
             "best_recommended": bool(current_model == best_model and best_model is not None),
             "current_model": current_model,
             "ranking": rank["ranking"],
+            "fallback": rank.get("fallback", False),
+            "baseline_city": rank.get("baseline_city"),
+            "updated_at": rank.get("updated_at", 0),
         }
     except Exception as ae:
-        print(f"[Weather] accuracy compute err: {type(ae).__name__}: {ae}")
+        print(f"[Weather] accuracy read err: {type(ae).__name__}: {ae}")
         accuracy = {"best_recommended": False, "ranking": []}
 
     result["accuracy"] = accuracy
@@ -1693,83 +1850,43 @@ def get_weather(
     return result
 
 
-# ---- 排行榜动态波动（让数据看起来在变化）----
+# ---- 排行榜静态数据接口 ----
+# 注：已彻底移除“每 5 分钟时间种子伪随机微调”代码（_score_time_seed /
+# _score_fluctuation / _get_dynamic_ranking / _get_dynamic_source 全部删除）。
+# 现在分数完全客观稳定，来自 RANK_DATA / SOURCE_DATA 静态派生表，不再做任何动态波动。
 
-def _score_time_seed():
-    """时间种子：每 5 分钟（300 秒）变化一次，同窗口内结果稳定。"""
-    return int(time.time() // 300)
-
-
-def _score_fluctuation(source_id, time_seed=None):
-    """某个数据源在当前 5 分钟窗口内的 score 波动值（±0.5）。
-    使用 MD5 派生确定性种子，保证同一源在同一窗口内、跨进程结果一致
-    （Python 内置 hash() 对字符串做了随机化，不能直接用）。
+@app.get("/api/leaderboard", tags=["准确率"], summary="获取准确率排行榜(只读预计算表)")
+def get_leaderboard(
+    city: str = Query(..., description="城市名，如：北京"),
+    district: str = Query(..., description="区域名，如：朝阳区"),
+):
+    """只读预计算排行榜接口（< 100ms）：
+    - 仅查询 city_model_rankings 预计算表，不触发任何外部 API / 不算分；
+    - 当前城市昨天得分尚未结算时，自动回退使用上一次有效的 7 天滚动窗口预计算数据；
+    - 新定位城市无历史数据时，返回全国基准站（北京朝阳区）的预计算排名；
+    - 禁止给前端返回“加载中 / 待比对”状态，分数一律有值（无数据则按占位分渲染）。
     """
-    if time_seed is None:
-        time_seed = _score_time_seed()
-    seed = int(hashlib.md5(f"{source_id}_{time_seed}".encode("utf-8")).hexdigest()[:8], 16)
-    rng = random.Random(seed)
-    return rng.uniform(-0.5, 0.5)
-
-
-# 动态排行榜缓存：range_key -> (time_seed, ranked_list)
-# 同一 5 分钟窗口内复用，保证 /api/ranking 与 /api/source 的 score/rank 一致
-_DYNAMIC_RANK_CACHE: dict = {}
-
-
-def _get_dynamic_ranking(range_key="7d"):
-    """返回带时间波动的排行榜（重新排序与排名）。
-    同一 5 分钟窗口内结果缓存，跨进程/跨请求一致。
-    """
-    base_list = RANK_DATA.get(range_key, RANK_DATA["7d"])
-    time_seed = _score_time_seed()
-    cached = _DYNAMIC_RANK_CACHE.get(range_key)
-    if cached and cached[0] == time_seed:
-        return copy.deepcopy(cached[1])
-    result = []
-    for item in base_list:
-        new_item = dict(item)
-        new_item["score"] = round(item["score"] + _score_fluctuation(item["id"], time_seed), 1)
-        result.append(new_item)
-    result.sort(key=lambda x: -x["score"])
-    for i, it in enumerate(result):
-        it["rank"] = i + 1
-    _DYNAMIC_RANK_CACHE[range_key] = (time_seed, result)
-    return copy.deepcopy(result)
-
-
-def _get_dynamic_source(source_id):
-    """返回带时间波动的数据源详情。
-    score 与 rank 均取自动态 7d 排行榜，保证与 /api/ranking(7d) 完全一致。
-    """
-    base = SOURCE_DATA.get(source_id)
-    if not base:
-        return None
-    result = copy.deepcopy(base)
-    result["score"] = round(base["score"] + _score_fluctuation(source_id), 1)
-    # rank 取动态 7d 排行榜中的名次，保证与列表一致
-    for it in _get_dynamic_ranking("7d"):
-        if it["id"] == source_id:
-            result["rank"] = it["rank"]
-            break
-    return result
+    return _get_city_rankings_with_fallback(city, district)
 
 
 @app.get("/api/ranking", tags=["准确率"], summary="获取准确率排行榜")
 def get_ranking(range: str = Query("7d", description="时间范围: 7d / 30d / all")):
-    """返回各数据源的准确率排行数据。
-    score 带基于当前时间的微小随机波动（±0.5），每 5 分钟变化一次，
-    让排行榜看起来在动态更新；与 /api/source/{id} 返回的 score 保持一致。
+    """返回各数据源的准确率排行数据（静态派生表，无动态波动）。
+    数据来自 RANK_DATA，按 7d/30d/all 时段衰减派生，保持客观稳定。
     """
-    return _get_dynamic_ranking(range)
+    return copy.deepcopy(RANK_DATA.get(range, RANK_DATA["7d"]))
 
 
 @app.get("/api/source/{source_id}", tags=["准确率"], summary="获取数据源详情")
 def get_source(source_id: str):
     """返回指定数据源的详细准确率信息（分要素、分时效）。
-    score 与 rank 均与 /api/ranking(7d) 保持一致。
+    score 与 rank 均取自静态派生表 SOURCE_DATA / RANK_DATA，无动态波动。
     """
-    return _get_dynamic_source(source_id)
+    base = SOURCE_DATA.get(source_id)
+    if not base:
+        return None
+    return copy.deepcopy(base)
+
 
 
 @app.get("/api/notifications", tags=["通知"], summary="获取通知列表")
@@ -2523,6 +2640,54 @@ def _score_day_for_city(city: str, district: str, record_date_str: str):
     return {"city": city, "district": district, "record_date": record_date_str, "scored": scored, "status": "done"}
 
 
+def _rebuild_city_ranking(city, district):
+    """重新计算单个城市近 7 天各模型的平均分，写入预计算表 city_model_rankings。
+    返回写入行数。"""
+    today_str = _cn_today_str()
+    rank = ACCURACY_STORE.rolling_7day_rank(city, district, today_str)
+    count = 0
+    for r in rank["ranking"]:
+        if r["score_daily_7d"] is not None:
+            ACCURACY_STORE.upsert_city_ranking(
+                city, district, r["model_code"],
+                r["score_daily_7d"], r["score_temp_7d"], r["score_precip_7d"],
+                r["samples_7d"], r["rank"],
+            )
+            count += 1
+    return count
+
+
+def _run_offline_scoring_task():
+    """每日 03:00 执行的离线计算任务：
+    a. 抓取各 _EVAL_CITIES 昨天的实况真值（Open-Meteo Archive API）
+    b. 与 forecast_snapshots 比对，算出各模型昨天的 Score_daily
+    c. 重新计算每个城市近 7 天各模型的平均分，更新写入 city_model_rankings
+    """
+    yesterday = _cn_yesterday_str()
+    print(f"[Cron 03:00] 离线计算任务启动，目标日期={yesterday}，城市数={len(_EVAL_CITIES)}")
+    # a + b: 抓实况并评分
+    for c in _EVAL_CITIES:
+        city, district = c["city"], c["district"]
+        try:
+            _fetch_actual_record_for_city(city, district, yesterday)
+        except Exception as e:
+            print(f"[Cron 03:00] 跳过 {city}{district} 实况抓取: {type(e).__name__}: {e}")
+        time.sleep(0.3)
+        try:
+            _score_day_for_city(city, district, yesterday)
+        except Exception as e:
+            print(f"[Cron 03:00] 跳过 {city}{district} 评分: {type(e).__name__}: {e}")
+    # c: 重新计算 7 天滚动均值，写入预计算表
+    updated = 0
+    for c in _EVAL_CITIES:
+        try:
+            updated += _rebuild_city_ranking(c["city"], c["district"])
+        except Exception as e:
+            print(f"[Cron 03:00] 跳过 {c['city']}{c['district']} 预计算: {type(e).__name__}: {e}")
+    print(f"[Cron 03:00] 离线计算完成，更新 {updated} 条预计算排名记录")
+    return {"job": "offline_scoring", "date": yesterday, "updated": updated}
+
+
 def _run_daily_forecast_job():
     """每日 08:00 执行：对所有 _EVAL_CITIES 抓明日(T+1)的预测快照。"""
     target_date = _cn_tomorrow_str()
@@ -2632,37 +2797,34 @@ def api_backfill(days: int = Query(7, description="回填天数，默认 7；用
 
 @app.get("/api/accuracy/rank", tags=["准确率系统"], summary="查询某城市近7天准确率排名")
 def api_accuracy_rank(city: str = Query(...), district: str = Query(...)):
-    today_str = _cn_today_str()
-    rank = ACCURACY_STORE.rolling_7day_rank(city, district, today_str)
-    code_to_name = {
-        "best_match": "智能综合",
-        "ecmwf_ifs025": "苹果/三星",
-        "gfs_seamless": "微软/Google",
-        "icon_seamless": "Windy/DWD",
-        "jma_seamless": "日本气象厅",
-        "cma_gfs": "中国气象局",
-        "cma_grapes_global": "中国气象局",
-        "meteofrance_seamless": "法国高精",
-    }
-    for r in rank["ranking"]:
-        r["display_name"] = code_to_name.get(r["model_code"], r["model_code"])
-    return rank
+    """只读预计算表 city_model_rankings（< 100ms，不触发外部 API / 不算分）。
+    与 /api/leaderboard 行为一致：当前城市无数据时回退全国基准站。"""
+    return _get_city_rankings_with_fallback(city, district)
 
 
 # =====================================================================
-# Cron 后台线程：每日 08:00 抓预测、每日 08:30 抓实况+评分
+# Cron 后台线程：每日 03:00 离线预计算、08:00 抓预测、08:30 抓实况+评分
 # =====================================================================
 
 def _cron_worker():
     """每分钟醒来一次，检查是否到点，到点就执行对应任务。
-    避免 threading.Timer 长漂；只在本地时间 08:00-08:02、08:30-08:32 窗口内触发，保证一天一次。
+    避免 threading.Timer 长漂；只在对应本地时间 2 分钟窗口内触发，保证一天一次。
+    - 03:00-03:02：离线预计算（抓昨日实况 + 评分 + 重算 7 天滚动均值写入 city_model_rankings）
+    - 08:00-08:02：抓明日(T+1)预测快照
+    - 08:30-08:32：抓昨日(T-1)实况并评分（产出 daily_scores，供次日 03:00 预计算使用）
     """
+    last_offline_day = None
     last_forecast_day = None
     last_actual_day = None
     while True:
         try:
             now = _cn_now()
             hh, mm, today = now.hour, now.minute, now.strftime("%Y-%m-%d")
+            if hh == 3 and 0 <= mm <= 2 and today != last_offline_day:
+                try:
+                    _run_offline_scoring_task()
+                finally:
+                    last_offline_day = today
             if hh == 8 and 0 <= mm <= 2 and today != last_forecast_day:
                 try:
                     _run_daily_forecast_job()
@@ -2689,14 +2851,23 @@ def _start_cron_if_needed():
     try:
         _CRON_THREAD = threading.Thread(target=_cron_worker, daemon=True, name="accuracy-cron")
         _CRON_THREAD.start()
-        print("  [Cron] 准确率后台定时线程已启动：每日 08:00 抓预测 / 08:30 抓实况+评分")
-        # 启动时立即跑一次：抓昨天的实况 + 评分 + 明天的预测
-        # 原因：Render 免费版休眠后重启可能错过 Cron 时间窗口
+        print("  [Cron] 准确率后台定时线程已启动：每日 03:00 离线预计算 / 08:00 抓预测 / 08:30 抓实况+评分")
+        # 启动时立即跑一次：回填 7 天数据 + 重建预计算排名 + 抓明日预测
+        # 原因：Render 免费版休眠后重启可能错过 Cron 时间窗口；
+        #       必须在回填后立即重建 city_model_rankings，否则排行榜会回退到基准站/空数据。
         def _startup_bootstrap():
             try:
                 time.sleep(5)  # 等 FastAPI 完全就绪
-                print("[Startup] 自动补跑：回填最近 7 天准确率数据（预报快照+实况+评分），修复全新部署后排行榜全 0 分")
+                print("[Startup] 自动补跑：回填最近 7 天准确率数据（预报快照+实况+评分）")
                 _backfill_accuracy(7)
+                print("[Startup] 自动补跑：重建预计算排行榜 city_model_rankings（基于回填的 daily_scores）")
+                updated = 0
+                for c in _EVAL_CITIES:
+                    try:
+                        updated += _rebuild_city_ranking(c["city"], c["district"])
+                    except Exception as e:
+                        print(f"[Startup] 跳过 {c['city']}{c['district']} 预计算: {type(e).__name__}: {e}")
+                print(f"[Startup] 预计算完成，更新 {updated} 条排名记录")
                 print("[Startup] 自动补跑：抓取明日预测快照")
                 _run_daily_forecast_job()
                 print("[Startup] 自动补跑完成")
@@ -2734,8 +2905,10 @@ if __name__ == "__main__":
     print("    POST /api/accuracy/run-forecast?target_date=YYYY-MM-DD")
     print("    POST /api/accuracy/run-actual?record_date=YYYY-MM-DD")
     print("    POST /api/accuracy/run-score?record_date=YYYY-MM-DD")
+    print("    POST /api/accuracy/backfill?days=7")
+    print("    GET  /api/leaderboard?city=北京&district=朝阳区  (前端只读，<100ms)")
     print("    GET  /api/accuracy/rank?city=北京&district=朝阳区")
-    print("  Cron: 每日 08:00 抓预测 / 08:30 抓实况+评分")
+    print("  Cron: 每日 03:00 离线预计算 / 08:00 抓预测 / 08:30 抓实况+评分")
     print()
     print("  按 Ctrl+C 停止服务")
     print("=" * 60)
