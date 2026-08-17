@@ -136,7 +136,7 @@ html.app-mode .home-hero{padding-top:20px}
 .weather-mode-badge .dot{width:6px;height:6px;border-radius:50%;background:#34D399;box-shadow:0 0 0 3px rgba(52,211,153,0.35);animation:pulseDot 1.6s ease-in-out infinite}
 @keyframes pulseDot{0%,100%{box-shadow:0 0 0 3px rgba(52,211,153,0.35)}50%{box-shadow:0 0 0 6px rgba(52,211,153,0.15)}}
 .weather-main{text-align:center;padding:0;position:relative;z-index:1}
-.home-cards{padding:16px 16px 120px;display:flex;flex-direction:column;gap:12px;margin-top:-8px}
+.home-cards{padding:16px 16px 120px;display:flex;flex-direction:column;gap:12px;margin-top:-24px;position:relative;z-index:2}
 .home-card{background:var(--card);border-radius:var(--r-lg);padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
 .home-card-title{font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
 .hourly-row{display:flex;justify-content:space-between;overflow-x:auto;gap:4px}
@@ -1191,14 +1191,14 @@ function updateWeatherDisplay(w){
   var hero=document.querySelector('.home-hero');
   if(hero){
     hero.setAttribute('data-w',wv.cond||'sunny');
-    // 同步 home-cards 顶部渐变背景，确保溢出内容也在渐变背景上
-    var cardsBg={sunny:'linear-gradient(180deg,#F97316 0%,rgba(249,115,22,0.75) 40%,rgba(249,115,22,0.15) 70%,#F0F5FA 100%)',
-      cloudy:'linear-gradient(180deg,#6366F1 0%,rgba(99,102,241,0.75) 40%,rgba(99,102,241,0.15) 70%,#F0F5FA 100%)',
-      rainy:'linear-gradient(180deg,#2563EB 0%,rgba(37,99,235,0.75) 40%,rgba(37,99,235,0.15) 70%,#F0F5FA 100%)',
-      overcast:'linear-gradient(180deg,#64748B 0%,rgba(100,116,139,0.75) 40%,rgba(100,116,139,0.15) 70%,#F0F5FA 100%)'};
+    // 同步 home-cards 顶部渐变背景，确保 hero 底部圆角区域完全被覆盖，消除白色角
+    var cardsBg={sunny:'linear-gradient(180deg,#F97316 0%,rgba(249,115,22,0.9) 15%,rgba(249,115,22,0.5) 45%,rgba(249,115,22,0.1) 70%,#F0F5FA 100%)',
+      cloudy:'linear-gradient(180deg,#6366F1 0%,rgba(99,102,241,0.9) 15%,rgba(99,102,241,0.5) 45%,rgba(99,102,241,0.1) 70%,#F0F5FA 100%)',
+      rainy:'linear-gradient(180deg,#2563EB 0%,rgba(37,99,235,0.9) 15%,rgba(37,99,235,0.5) 45%,rgba(37,99,235,0.1) 70%,#F0F5FA 100%)',
+      overcast:'linear-gradient(180deg,#64748B 0%,rgba(100,116,139,0.9) 15%,rgba(100,116,139,0.5) 45%,rgba(100,116,139,0.1) 70%,#F0F5FA 100%)'};
     var cbg=cardsBg[wv.cond]||cardsBg.sunny;
     var cards=document.querySelector('.home-cards');
-    if(cards){cards.style.backgroundImage=cbg;cards.style.backgroundRepeat='no-repeat';cards.style.backgroundPosition='0 0';cards.style.backgroundSize='100% 250px';}
+    if(cards){cards.style.backgroundImage=cbg;cards.style.backgroundRepeat='no-repeat';cards.style.backgroundPosition='0 0';cards.style.backgroundSize='100% 300px';}
   }
 
   document.getElementById('homeWeatherIcon').innerHTML=wIcon(wv.cond,130);
