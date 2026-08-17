@@ -582,7 +582,7 @@ html.app-mode .home-hero{padding-top:20px}
 <div class="screen" id="screen-leaderboard">
   <div class="lb-header">
     <h2>引擎底座准确率排行榜</h2>
-    <p>近 7 天各引擎模型的综合预报准确率（温度 60% + 降水 40%）</p>
+    <p id="lbHeaderSub">近 7 天各引擎模型的综合预报准确率（温度 60% + 降水 40%）</p>
   </div>
   <div class="lb-tabs">
     <div class="lb-tab active" onclick="switchTimeRange('7d')">近7天</div>
@@ -1451,11 +1451,14 @@ function renderLeaderboard(){
 // 设计原则：数据均来自后端预计算表，已离线算好；前端不再出现“待比对 / 加载中 / 采集中”等等待态，
 // 单模型缺样本时用中性占位“--”表示，而非“待比对”。
 function _renderLeaderboardFromData(acc){
+  // 根据当前 S.range 动态更新副标题
+  var range = S.range || '7d';
+  var subEl = document.getElementById('lbHeaderSub');
+  if(subEl) subEl.textContent = (range==='30d'?'近 30 天':'近 7 天')+'各引擎模型的综合预报准确率（温度 60% + 降水 40%）';
+  var samplesLabel = (range==='30d'?'近30天样本':'近7天样本');
   var rankList = (acc && acc.ranking) || [];
   var html='';
   var i,rc,name,sub,score,displayName;
-  // 若当前城市无预计算数据且基准站也无（全新部署未跑批），后端会返回空 ranking，
-  // 此时按引擎默认顺序兜底渲染，分数用“--”占位（不展示“待比对/加载中”）。
   var list = rankList.length>0 ? rankList : ENGINE_SOURCES.map(function(e,i){
     return {model_code:e.model, rank:i+1, display_name:e.name, score_daily_7d:null, score_temp_7d:null, score_precip_7d:null, samples_7d:0};
   });
@@ -1476,7 +1479,7 @@ function _renderLeaderboardFromData(acc){
       : '<div class="lb-score-val">'+score+'</div><div style="font-size:10px;opacity:.7">综合得分</div>';
     html+='<div class="lb-item" onclick="selectSourceByModel(\''+r.model_code+'\')"><div class="lb-rank '+rcClass+'">'+rc+'</div>'
       +'<div class="lb-info"><div class="lb-name">'+name+' <span style="font-size:10px;opacity:.7;font-weight:500">'+sub+'</span></div>'
-      +'<div class="lb-desc">温度 '+scoreTemp+'分 · 降水 '+scorePrec+'分 · '+samples+'天样本</div></div>'
+      +'<div class="lb-desc">温度 '+scoreTemp+'分 · 降水 '+scorePrec+'分 · '+samplesLabel+' '+samples+'</div></div>'
       +'<div class="lb-score">'+scoreDisplay+'</div></div>';
   }
   document.getElementById('lbList').innerHTML=html;
