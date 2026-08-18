@@ -516,6 +516,7 @@ class UserStore:
             charset=self.mysql_cfg.get("charset", "utf8mb4"),
             cursorclass=pymysql.cursors.DictCursor,
             connect_timeout=3,
+            **_mysql_ssl_kwargs(self.mysql_cfg.get("host"), self.mysql_cfg.get("port", 3306)),
         )
 
     def _init_db(self):
@@ -630,6 +631,35 @@ class UserStore:
 USER_STORE = UserStore(APP_CONFIG["mysql"])
 
 
+def _mysql_ssl_kwargs(cfg_host: str, cfg_port) -> dict:
+    """判断 MySQL 连接是否需要启用 SSL，返回可直接 splat 进 pymysql.connect() 的 kwargs。
+    触发条件（任一命中就启用，兼容 TiDB Cloud / PlanetScale / 阿里云 RDS 强 SSL）：
+    - 用户设了环境变量 MYSQL_SSL=1
+    - 端口是 4000 (TiDB Serverless) / 33060 (MySQL X Protocol / PlanetScale)
+    - host 包含 .tidbcloud.com / .psdb.cloud / rds.aliyuncs.com / ap-southeast / aws / gcp / azure
+    否则返回空 dict，不走 SSL（本地开发 / 内网 MySQL 正常）。
+    """
+    host = (cfg_host or "").lower()
+    port = str(cfg_port or "")
+    force_ssl = str(os.environ.get("MYSQL_SSL", "")).strip().lower() in ("1", "true", "yes", "on")
+    need = force_ssl or port in ("4000", "33060") or any(
+        tag in host for tag in (".tidbcloud.com", ".psdb.cloud", "rds.aliyuncs.com",
+                                "aws", "gcp", "azure", "ap-", "us-", "eu-", "singapore", "tokyo")
+    )
+    if not need:
+        return {}
+    # 云厂商 Serverless MySQL 证书通常由系统 CA 签发，不需要指定 ca_path；不校验主机名（避免内网/VPN/自签证书通不过）
+    try:
+        import ssl as _sslmod
+        ctx = _sslmod.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _sslmod.CERT_NONE
+        return {"ssl": ctx}
+    except Exception:
+        # 退化为老式 ssl dict 传参（部分旧版 pymysql 支持）
+        return {"ssl": {"ssl": True, "check_hostname": False, "verify_mode": 0}}
+
+
 # =====================================================================
 # 社区/社交数据永久存储层（Render Free 档专用方案）
 # Render Web Service Free 档不支持 Persistent Disk，重部署会清 /tmp
@@ -668,6 +698,7 @@ class SocialStore:
             connect_timeout=5,
             read_timeout=10,
             write_timeout=10,
+            **_mysql_ssl_kwargs(self.mysql_cfg.get("host"), self.mysql_cfg.get("port", 3306)),
         )
 
     def _init_db(self):
@@ -828,6 +859,7 @@ class AccuracyStore:
             charset=self.mysql_cfg.get("charset", "utf8mb4"),
             cursorclass=pymysql.cursors.DictCursor,
             connect_timeout=3,
+            **_mysql_ssl_kwargs(self.mysql_cfg.get("host"), self.mysql_cfg.get("port", 3306)),
         )
 
     def _init_db(self):
