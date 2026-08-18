@@ -3133,6 +3133,41 @@ document.addEventListener('keydown', function(e){
   }
 }, {passive:false});
 
+// ===== 兜底修复：强制保证 .screen 的 bottom = Tab Bar 高度，彻底解决遮挡 & 拉不到底 =====
+// 不依赖 CSS 优先级，直接用 JS 内联样式写死 bottom，任何模式都生效
+function _fixScreenBottom(){
+  var isApp = document.documentElement.classList.contains('app-mode');
+  var screens = document.querySelectorAll('.screen');
+  var tabBar = document.querySelector('.tab-bar');
+  var tabH;
+  // 优先用 tabBar 实际高度，兜底用 CSS 变量
+  if(tabBar){ tabH = tabBar.getBoundingClientRect().height; }
+  else{
+    var cs = getComputedStyle(document.documentElement);
+    var cssH = parseFloat(cs.getPropertyValue('--tab-h'));
+    tabH = isNaN(cssH) ? 95 : cssH;
+    // app-mode 加底部安全区
+    if(isApp){
+      var st = getComputedStyle(document.body).getPropertyValue('padding-bottom') || '0';
+    }
+  }
+  // 给每个 screen 写死内联 bottom，优先级最高
+  screens.forEach(function(sc){
+    if(isApp){
+      // app-mode：tab-h + 安全区（通过计算 tabBar 高度已包含 safe-area）
+      sc.style.setProperty('bottom', tabH + 'px', 'important');
+    }else{
+      // 桌面壳模式：固定 var(--tab-h) = 95px
+      sc.style.setProperty('bottom', tabH + 'px', 'important');
+    }
+    sc.style.setProperty('padding-bottom', '24px', 'important');
+    // 重置滚动，确保显示后能到底
+  });
+}
+_fixScreenBottom();
+window.addEventListener('resize', function(){ setTimeout(_fixScreenBottom, 30); });
+window.addEventListener('orientationchange', function(){ setTimeout(_fixScreenBottom, 200); setTimeout(_fixScreenBottom, 600); });
+
 // ===== 锁定竖屏方向（仅手机/APP模式尝试锁定；桌面端不干扰）=====
 function _lockOrientation(){
   var w=window.innerWidth, h=window.innerHeight;
@@ -3144,6 +3179,8 @@ function _lockOrientation(){
   }
   // 否则隐藏遮罩（桌面端 / 手机竖屏）
   if(lock){ lock.style.removeProperty('display'); }
+  // 每次检查后也补一次 screen bottom，防止横屏切回后样式丢失
+  _fixScreenBottom();
   // 仅在 APP 模式下尝试 API 锁定（桌面浏览器大多不支持或没必要）
   if(document.documentElement.classList.contains('app-mode')){
     try{
@@ -3260,6 +3297,8 @@ function _showInstallBanner(){
 }
 // 3 秒后主动触发一次（覆盖 iOS Safari 等不抛 beforeinstallprompt 的场景）
 window.addEventListener('load', function(){ setTimeout(_showInstallBanner, 3000); });
+// 页面完全加载后再补一次 screen bottom 修复（此时 tabBar 高度已确定）
+window.addEventListener('load', function(){ setTimeout(_fixScreenBottom, 100); setTimeout(_fixScreenBottom, 500); });
 
 // ===== PWA Service Worker 注册（仅生产 HTTPS 环境，本地 localhost 也支持）=====
 if('serviceWorker' in navigator){
