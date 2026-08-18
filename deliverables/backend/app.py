@@ -496,6 +496,38 @@ if os.environ.get("MYSQL_HOST"):
     })
 
 
+# =====================================================================
+# MySQL 连接 SSL 自动识别工具函数
+# 必须在所有 *_connect() 方法之前定义（UserStore / AccuracyStore / SocialStore 都用它）
+# =====================================================================
+
+
+def _mysql_ssl_kwargs(cfg_host: str, cfg_port) -> dict:
+    """判断 MySQL 连接是否需要启用 SSL，返回可直接 splat 进 pymysql.connect() 的 kwargs。
+    触发条件（任一命中就启用，兼容 TiDB Cloud / PlanetScale / 阿里云 RDS 强 SSL）：
+    - 用户设了环境变量 MYSQL_SSL=1
+    - 端口是 4000 (TiDB Serverless) / 33060 (MySQL X Protocol / PlanetScale)
+    - host 包含 .tidbcloud.com / .psdb.cloud / rds.aliyuncs.com
+    否则返回空 dict，不走 SSL（本地开发 / 内网 MySQL 正常）。
+    """
+    host = (cfg_host or "").lower()
+    port = str(cfg_port or "")
+    force_ssl = str(os.environ.get("MYSQL_SSL", "")).strip().lower() in ("1", "true", "yes", "on")
+    need = force_ssl or port in ("4000", "33060") or any(
+        tag in host for tag in (".tidbcloud.com", ".psdb.cloud", "rds.aliyuncs.com")
+    )
+    if not need:
+        return {}
+    try:
+        import ssl as _sslmod
+        ctx = _sslmod.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _sslmod.CERT_NONE
+        return {"ssl": ctx}
+    except Exception:
+        return {"ssl": {"ssl": True, "check_hostname": False, "verify_mode": 0}}
+
+
 class UserStore:
     """用户存储抽象层：优先用 MySQL，不可用时降级为内存字典（原型演示用）。"""
 
@@ -629,35 +661,6 @@ class UserStore:
 
 
 USER_STORE = UserStore(APP_CONFIG["mysql"])
-
-
-def _mysql_ssl_kwargs(cfg_host: str, cfg_port) -> dict:
-    """判断 MySQL 连接是否需要启用 SSL，返回可直接 splat 进 pymysql.connect() 的 kwargs。
-    触发条件（任一命中就启用，兼容 TiDB Cloud / PlanetScale / 阿里云 RDS 强 SSL）：
-    - 用户设了环境变量 MYSQL_SSL=1
-    - 端口是 4000 (TiDB Serverless) / 33060 (MySQL X Protocol / PlanetScale)
-    - host 包含 .tidbcloud.com / .psdb.cloud / rds.aliyuncs.com / ap-southeast / aws / gcp / azure
-    否则返回空 dict，不走 SSL（本地开发 / 内网 MySQL 正常）。
-    """
-    host = (cfg_host or "").lower()
-    port = str(cfg_port or "")
-    force_ssl = str(os.environ.get("MYSQL_SSL", "")).strip().lower() in ("1", "true", "yes", "on")
-    need = force_ssl or port in ("4000", "33060") or any(
-        tag in host for tag in (".tidbcloud.com", ".psdb.cloud", "rds.aliyuncs.com",
-                                "aws", "gcp", "azure", "ap-", "us-", "eu-", "singapore", "tokyo")
-    )
-    if not need:
-        return {}
-    # 云厂商 Serverless MySQL 证书通常由系统 CA 签发，不需要指定 ca_path；不校验主机名（避免内网/VPN/自签证书通不过）
-    try:
-        import ssl as _sslmod
-        ctx = _sslmod.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = _sslmod.CERT_NONE
-        return {"ssl": ctx}
-    except Exception:
-        # 退化为老式 ssl dict 传参（部分旧版 pymysql 支持）
-        return {"ssl": {"ssl": True, "check_hostname": False, "verify_mode": 0}}
 
 
 # =====================================================================
@@ -933,7 +936,7 @@ class AccuracyStore:
                         score_temp_30d DECIMAL(6,2) DEFAULT NULL,
                         score_precip_30d DECIMAL(6,2) DEFAULT NULL,
                         samples_30d INT DEFAULT 0,
-                        rank INT NOT NULL,
+                        `rank` INT NOT NULL,
                         updated_at BIGINT NOT NULL,
                         UNIQUE KEY uk_city_model (city, district, model_code)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -1202,14 +1205,14 @@ class AccuracyStore:
                         """
                         INSERT INTO city_model_rankings
                           (city,district,model_code,score_7d,score_temp_7d,score_precip_7d,samples_7d,
-                           score_30d,score_temp_30d,score_precip_30d,samples_30d,rank,updated_at)
+                           score_30d,score_temp_30d,score_precip_30d,samples_30d,`rank`,updated_at)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON DUPLICATE KEY UPDATE
                           score_7d=VALUES(score_7d),score_temp_7d=VALUES(score_temp_7d),
                           score_precip_7d=VALUES(score_precip_7d),samples_7d=VALUES(samples_7d),
                           score_30d=VALUES(score_30d),score_temp_30d=VALUES(score_temp_30d),
                           score_precip_30d=VALUES(score_precip_30d),samples_30d=VALUES(samples_30d),
-                          rank=VALUES(rank),updated_at=VALUES(updated_at)
+                          `rank`=VALUES(`rank`),updated_at=VALUES(updated_at)
                         """,
                         (city, district, model_code,
                          float(score_7d), float(score_temp_7d) if score_temp_7d is not None else None,
@@ -1248,7 +1251,7 @@ class AccuracyStore:
                 conn = self._connect()
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT * FROM city_model_rankings WHERE city=%s AND district=%s ORDER BY rank ASC",
+                        "SELECT * FROM city_model_rankings WHERE city=%s AND district=%s ORDER BY `rank` ASC",
                         (city, district),
                     )
                     rows = cur.fetchall() or []
