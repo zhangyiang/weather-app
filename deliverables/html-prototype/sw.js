@@ -1,11 +1,10 @@
 // 聚合天气 Service Worker
 // 策略：
-//   - 静态资源（HTML/CSS/JS/图标/manifest/data.json）→ 缓存优先，后台更新
+//   - HTML 页面（./ 和 ./index.html）→ 网络优先（保证用户总能拿到最新 UI），失败时降级到缓存
+//   - 其他静态资源（CSS/JS/图标/manifest/data.json）→ 缓存优先 + 后台更新
 //   - /api/* 请求 → 网络优先（保证天气数据实时），失败时返回离线提示
-const CACHE = 'weather-app-v1';
+const CACHE = 'weather-app-v2';
 const SHELL = [
-  './',
-  './index.html',
   './manifest.webmanifest',
   './data.json',
   './icons/icon-192.png',
@@ -45,7 +44,22 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // 静态资源：缓存优先 + 后台更新（stale-while-revalidate）
+  // HTML 页面（./ 和 ./index.html）：网络优先，确保用户拿到最新 UI 代码
+  // 失败时（离线）才降级用缓存
+  if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname.endsWith('.html')) {
+    e.respondWith(
+      fetch(req).then((res) => {
+        if (res && res.status === 200) {
+          const clone = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, clone)).catch(() => {});
+        }
+        return res;
+      }).catch(() => caches.match(req).then((cached) => cached || new Response('离线模式，请连接网络后刷新', { status: 503 })))
+    );
+    return;
+  }
+
+  // 其他静态资源：缓存优先 + 后台更新（stale-while-revalidate）
   e.respondWith(
     caches.match(req).then((cached) => {
       const network = fetch(req).then((res) => {
