@@ -690,7 +690,7 @@ class SocialStore:
         self._init_db()
 
     def _connect(self):
-        return pymysql.connect(
+        conn = pymysql.connect(
             host=self.mysql_cfg["host"],
             port=int(self.mysql_cfg.get("port", 3306)),
             user=self.mysql_cfg["user"],
@@ -698,38 +698,77 @@ class SocialStore:
             database=self.mysql_cfg.get("database", ""),
             charset=self.mysql_cfg.get("charset", "utf8mb4"),
             cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=5,
-            read_timeout=10,
-            write_timeout=10,
+            connect_timeout=10,
+            read_timeout=30,
+            write_timeout=60,
             **_mysql_ssl_kwargs(self.mysql_cfg.get("host"), self.mysql_cfg.get("port", 3306)),
         )
+        # 扩容单包上限至 128MB，允许存储 base64 大图快照（TiDB / Serverless MySQL 默认可能 16KB / 4MB）
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET SESSION max_allowed_packet=134217728")
+                cur.execute("SET SESSION net_read_timeout=300")
+                cur.execute("SET SESSION net_write_timeout=300")
+        except Exception:
+            pass
+        return conn
 
     def _init_db(self):
         try:
             conn = self._connect()
             with conn.cursor() as cur:
-                # PlanetScale 免费档 8.0 兼容 JSON；若不支持则降级为 LONGTEXT，由应用层序列化
-                try:
-                    cur.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS social_data_snapshots (
-                            id INT PRIMARY KEY,
-                            payload JSON NOT NULL,
-                            updated_at BIGINT NOT NULL
-                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                        """
-                    )
-                except Exception:
-                    # 某些 serverless MySQL 列类型受限，改用 LONGTEXT
-                    cur.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS social_data_snapshots (
-                            id INT PRIMARY KEY,
-                            payload LONGTEXT NOT NULL,
-                            updated_at BIGINT NOT NULL
-                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                        """
-                    )
+                # ① 媒体大对象表：头像/帖子图 base64 单独存 LONGBLOB/LONGTEXT，避免一张快照 JSON 撑爆单条包限制
+                for try_sql in (
+                    """
+                    CREATE TABLE IF NOT EXISTS media_blobs (
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        kind VARCHAR(16) NOT NULL,
+                        ref VARCHAR(128),
+                        data LONGBLOB NOT NULL,
+                        size INT DEFAULT 0,
+                        created_at BIGINT NOT NULL,
+                        INDEX idx_kind_ref (kind, ref)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS media_blobs (
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        kind VARCHAR(16) NOT NULL,
+                        ref VARCHAR(128),
+                        data LONGTEXT NOT NULL,
+                        size INT DEFAULT 0,
+                        created_at BIGINT NOT NULL,
+                        INDEX idx_kind_ref (kind, ref)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """,
+                ):
+                    try:
+                        cur.execute(try_sql)
+                        break
+                    except Exception:
+                        continue
+                # ② PlanetScale 免费档 8.0 兼容 JSON；若不支持则降级为 LONGTEXT，由应用层序列化
+                for try_sql in (
+                    """
+                    CREATE TABLE IF NOT EXISTS social_data_snapshots (
+                        id INT PRIMARY KEY,
+                        payload JSON NOT NULL,
+                        updated_at BIGINT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS social_data_snapshots (
+                        id INT PRIMARY KEY,
+                        payload LONGTEXT NOT NULL,
+                        updated_at BIGINT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """,
+                ):
+                    try:
+                        cur.execute(try_sql)
+                        break
+                    except Exception:
+                        continue
                 conn.commit()
             conn.close()
             print("  [DB] MySQL 社区数据存储就绪（mode=mysql，跨 redeploy 永久保留）")
@@ -739,54 +778,195 @@ class SocialStore:
             print("  [DB] 社区数据已降级为本地 JSON + Render /tmp（重新部署会清空）。")
             print("  [DB] 启用永久保留：配置 MYSQL_HOST / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE 环境变量。")
 
+    def _store_base64(self, conn, cur, kind: str, ref: str, data_str: str) -> str:
+        """把一段 base64 data 字符串写入 media_blobs，返回 ID 引用字符串「__MEDIA__{id}__」供快照里占位。
+        空串/非字符串直接原样返回；超 2KB 的图就走独立表（更积极走独立表，避免 JSON 快照撑爆）。"""
+        if not isinstance(data_str, str) or not data_str:
+            return data_str
+        if len(data_str) <= 2 * 1024:  # 2KB 以内直接在 JSON 里内联（更小的图才内联，更安全）
+            return data_str
+        now_ms = _now_ms()
+        try:
+            # 若已存过同 ref（同一条 feed.photo / 同用户头像）则更新
+            cur.execute("SELECT id FROM media_blobs WHERE kind=%s AND ref=%s LIMIT 1", (kind, ref))
+            row = cur.fetchone()
+            if row:
+                cur.execute(
+                    "UPDATE media_blobs SET data=%s, size=%s, created_at=%s WHERE id=%s",
+                    (data_str, len(data_str), now_ms, row["id"]),
+                )
+                return f"__MEDIA__{row['id']}__"
+            cur.execute(
+                "INSERT INTO media_blobs (kind, ref, data, size, created_at) VALUES (%s,%s,%s,%s,%s)",
+                (kind, ref or f"{kind}-{now_ms}", data_str, len(data_str), now_ms),
+            )
+            return f"__MEDIA__{cur.lastrowid}__"
+        except Exception as e:
+            print(f"[SocialStore] media_blobs 写入失败(kind={kind},len={len(data_str)}): {type(e).__name__}: {e}")
+            return data_str  # 存失败就回退到 JSON 内联，不影响主流程
+
+    def _load_base64(self, conn, cur, ref_str: str) -> str:
+        """「__MEDIA__{id}__」占位字符串还原成 base64；其它原样返回。"""
+        if not isinstance(ref_str, str) or not ref_str.startswith("__MEDIA__") or not ref_str.endswith("__"):
+            return ref_str
+        try:
+            mid = int(ref_str[len("__MEDIA__"):-len("__")])
+        except Exception:
+            return ref_str
+        try:
+            cur.execute("SELECT data FROM media_blobs WHERE id=%s LIMIT 1", (mid,))
+            row = cur.fetchone()
+            if not row:
+                return ref_str
+            data = row.get("data")
+            # LONGBLOB 是 bytes；LONGTEXT 是 str，统一转 str
+            if isinstance(data, (bytes, bytearray)):
+                try:
+                    data = data.decode("utf-8")
+                except Exception:
+                    data = data.decode("latin-1", errors="replace")
+            return data
+        except Exception as e:
+            print(f"[SocialStore] media_blobs 读取失败(id={mid}): {type(e).__name__}: {e}")
+            return ref_str
+
     def write_snapshot(self, payload: dict):
         """把整个 payload（FEEDS + 用户 + 关注 + 头像）upsert 到 MySQL。
+        大型图片字段会单独提取进 media_blobs，快照内用 ID 占位，避免单条 JSON 撑爆 TiDB / MySQL 单包限制。
         返回 True=成功，False=失败（降级JSON兜底仍会执行）。
         """
         if self.mode != "mysql":
             return False
         try:
             conn = self._connect()
-            payload_json = json.dumps(payload, ensure_ascii=False)
-            now_ms = _now_ms()
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO social_data_snapshots (id, payload, updated_at)
-                    VALUES (%s, %s, %s)
-                    ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)
-                    """,
-                    (self.SNAPSHOT_ID, payload_json, now_ms),
-                )
-                conn.commit()
-            conn.close()
+            payload = copy.deepcopy(payload)  # 不污染调用方内存
+            # --- 写入时：遍历 feeds + user_extras，把长 base64 搬到 media_blobs ---
+            try:
+                with conn.cursor() as cur:
+                    feeds = payload.get("feeds") or []
+                    for i, f in enumerate(feeds):
+                        if not isinstance(f, dict):
+                            continue
+                        # 主图
+                        ph = f.get("photo")
+                        if isinstance(ph, str) and ph.startswith("data:"):
+                            f["photo"] = self._store_base64(conn, cur, "feed_photo", f"feed:{f.get('id', i)}:photo", ph)
+                        # 多图数组
+                        plist = f.get("photos")
+                        if isinstance(plist, list):
+                            for j, p in enumerate(plist):
+                                if isinstance(p, str) and p.startswith("data:"):
+                                    plist[j] = self._store_base64(conn, cur, "feed_photo", f"feed:{f.get('id', i)}:photo_{j}", p)
+                        # 评论区头像（少，通常是首字母头像，安全起见也走）
+                        cml = f.get("comments_list")
+                        if isinstance(cml, list):
+                            for ci, cm in enumerate(cml):
+                                if not isinstance(cm, dict):
+                                    continue
+                                av = cm.get("avatar")
+                                if isinstance(av, str) and av.startswith("data:"):
+                                    cm["avatar"] = self._store_base64(conn, cur, "comment_avatar", f"cm:{f.get('id',i)}:{ci}", av)
+                    # 头像
+                    extras = payload.get("user_extras") or {}
+                    for uk, uv in extras.items():
+                        if not isinstance(uv, dict):
+                            continue
+                        av = uv.get("avatar")
+                        if isinstance(av, str) and av.startswith("data:"):
+                            uv["avatar"] = self._store_base64(conn, cur, "user_avatar", f"user:{uk}:avatar", av)
+                    # --- 再写快照 ---
+                    payload_json = json.dumps(payload, ensure_ascii=False)
+                    now_ms = _now_ms()
+                    size_mb = round(len(payload_json) / 1024 / 1024, 3)
+                    cur.execute(
+                        """
+                        INSERT INTO social_data_snapshots (id, payload, updated_at)
+                        VALUES (%s, %s, %s)
+                        ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)
+                        """,
+                        (self.SNAPSHOT_ID, payload_json, now_ms),
+                    )
+                    conn.commit()
+                    # 统一打印一次，方便看快照是否变小
+                    print(f"[SocialStore] 写入 MySQL 成功：快照 {size_mb}MB，媒体表独立存储。")
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
             return True
         except Exception as e:
             print(f"[SocialStore] 写入 MySQL 快照失败（不影响本地JSON兜底）: {type(e).__name__}: {e}")
+            # 栈前 80 个字符，避免日志爆炸
+            import traceback
+            try:
+                tb = traceback.format_exc()[-300:]
+                print(f"[SocialStore]  详情: {tb}")
+            except Exception:
+                pass
             return False
 
     def read_snapshot(self):
-        """从 MySQL 读取最近一次快照 payload。失败或无数据返回 None。"""
+        """从 MySQL 读取最近一次快照 payload，并还原 media_blobs 里的 base64。
+        失败或无数据返回 None。"""
         if self.mode != "mysql":
             return None
         try:
             conn = self._connect()
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT payload FROM social_data_snapshots WHERE id = %s",
-                    (self.SNAPSHOT_ID,),
-                )
-                row = cur.fetchone()
-            conn.close()
-            if not row:
-                return None
-            raw = row.get("payload")
-            # LONGTEXT → 字符串；JSON → dict/str 皆可，统一 try parse
-            if isinstance(raw, (dict, list)):
-                return raw
-            if isinstance(raw, str):
-                return json.loads(raw)
-            return None
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT payload FROM social_data_snapshots WHERE id = %s",
+                        (self.SNAPSHOT_ID,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        conn.close()
+                        return None
+                    raw = row.get("payload")
+                    # LONGTEXT → 字符串；JSON → dict/str 皆可，统一 try parse
+                    if isinstance(raw, (dict, list)):
+                        payload = raw
+                    elif isinstance(raw, str):
+                        payload = json.loads(raw)
+                    else:
+                        conn.close()
+                        return None
+                    # --- 还原：__MEDIA__xxx__ → 真实 base64 ---
+                    feeds = payload.get("feeds") if isinstance(payload, dict) else None
+                    if isinstance(feeds, list):
+                        for f in feeds:
+                            if not isinstance(f, dict):
+                                continue
+                            ph = f.get("photo")
+                            if isinstance(ph, str) and ph.startswith("__MEDIA__"):
+                                f["photo"] = self._load_base64(conn, cur, ph)
+                            plist = f.get("photos")
+                            if isinstance(plist, list):
+                                plist[:] = [
+                                    self._load_base64(conn, cur, p) if isinstance(p, str) else p
+                                    for p in plist
+                                ]
+                            cml = f.get("comments_list")
+                            if isinstance(cml, list):
+                                for cm in cml:
+                                    if isinstance(cm, dict):
+                                        av = cm.get("avatar")
+                                        if isinstance(av, str) and av.startswith("__MEDIA__"):
+                                            cm["avatar"] = self._load_base64(conn, cur, av)
+                    extras = payload.get("user_extras") if isinstance(payload, dict) else None
+                    if isinstance(extras, dict):
+                        for uv in extras.values():
+                            if isinstance(uv, dict):
+                                av = uv.get("avatar")
+                                if isinstance(av, str) and av.startswith("__MEDIA__"):
+                                    uv["avatar"] = self._load_base64(conn, cur, av)
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            return payload
         except Exception as e:
             print(f"[SocialStore] 读取 MySQL 快照失败（回退至本地JSON）: {type(e).__name__}: {e}")
             return None

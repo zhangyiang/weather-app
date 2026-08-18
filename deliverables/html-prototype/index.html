@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<!-- 移动端 viewport：禁用缩放，全屏适配 -->
-<meta name="viewport" content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<!-- 移动端 viewport：禁用缩放，全屏适配；interactive-widget=resizes-content 确保键盘弹起时不把底部 tab 顶出屏幕 -->
+<meta name="viewport" content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -13,6 +13,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="聚合天气">
+<!-- Android Chrome 全屏 WebView / TWA 模式下禁用地址栏显示 -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -22,8 +25,13 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{height:100%}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;-webkit-user-drag:none;user-select:none;-webkit-user-select:none}
+html,body{height:100%;width:100%;overflow:hidden;margin:0;padding:0}
+/* ===== 页面彻底锁定：position:fixed + inset:0 杜绝任何页面级拖拽/滚动/橡皮筋回弹 ===== */
+html{position:fixed;inset:0;touch-action:none;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{position:fixed;inset:0;overscroll-behavior:none;-webkit-overflow-scrolling:touch;margin:0}
+img,svg{pointer-events:none;user-select:none;-webkit-user-drag:none;-webkit-user-select:none;display:block;max-width:100%;-webkit-touch-callout:none}
+input,textarea,select,[contenteditable=true]{user-select:text;-webkit-user-select:text;touch-action:auto;-webkit-touch-callout:default}
 :root{
   --bg:#F0F5FA;--card:#FFFFFF;--text-primary:#1B2845;--text-secondary:#6B7B95;
   --accent:#3B82F6;--accent-light:#DBEAFE;--muted:#9CA8BE;--border:#E8EDF5;
@@ -34,20 +42,42 @@ html,body{height:100%}
 }
 body{font-family:var(--font);background:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden;color:var(--text-primary)}
 .device{width:390px;height:844px;background:var(--bg);border-radius:44px;overflow:hidden;position:relative;box-shadow:0 0 0 12px #1a1a2e,0 0 0 14px #2a2a4e,0 40px 80px rgba(0,0,0,0.5);transform-origin:center center}
-.screen{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--bg);display:none;flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.screen{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--bg);display:none;flex-direction:column;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior-x:none;overscroll-behavior-y:contain}
 .screen.active{display:flex}
 .screen::-webkit-scrollbar{display:none}
 
-/* ===== 移动端全屏适配：作为 PWA / 安装包运行时，让设备框填满整个屏幕，去除手机外壳阴影 ===== */
-html.app-mode{height:100%}
-html.app-mode body{background:var(--bg);align-items:stretch;justify-content:stretch;min-height:100vh;min-height:100dvh}
-html.app-mode .device{width:100vw;height:100vh;height:100dvh;border-radius:0;box-shadow:none;transform:none !important}
+/* ===== 移动端全屏适配：作为 PWA / 安装包 / 小屏移动端浏览器运行时，让设备框填满整个屏幕，去除手机外壳阴影 ===== */
+/* app-mode 触发条件：manifest standalone / iOS standalone / ?app=1 / WebView / 视口宽度≤500px */
+html.app-mode{height:100%;width:100%;margin:0;padding:0}
+html.app-mode body{background:var(--bg);align-items:stretch;justify-content:stretch;min-height:100vh;min-height:100svh;min-height:100dvh;height:100%;height:100svh;height:100dvh;margin:0;padding:0;overflow:hidden}
+html.app-mode .device{width:100vw;width:100%;height:100vh;height:100svh;height:100dvh;max-height:100svh;border-radius:0;box-shadow:none;transform:none !important;left:0;top:0;margin:0;padding:0}
 /* 安全区适配（刘海屏/底部手势条） */
-html.app-mode .screen{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+html.app-mode .screen{padding-top:env(safe-area-inset-top);padding-bottom:calc(var(--tab-h) + env(safe-area-inset-bottom))}
 html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
 /* 在 APP 模式下隐藏自定义状态栏，让手机系统状态栏显示 */
 html.app-mode .status-bar{display:none}
 html.app-mode .home-hero{padding-top:20px}
+html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(var(--tab-h) + env(safe-area-inset-bottom))}
+
+/* ===== 竖屏锁定强制：横屏时强制把页面旋转 90 度 + 给出"请转回竖屏"遮罩 ===== */
+.orientation-lock{
+  position:fixed;inset:0;z-index:999999;background:var(--accent);color:#fff;
+  display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
+  font-weight:600;font-size:18px;padding:24px;text-align:center;
+}
+.orientation-lock svg{width:80px;height:80px;animation:rotateHint 2s ease-in-out infinite}
+@keyframes rotateHint{0%,100%{transform:rotate(0)}50%{transform:rotate(-90deg)}}
+/* 横屏时：只要屏幕是横的，不管什么设备/什么模式，都强制显示遮罩（不再限制 max-width）*/
+@media (orientation:landscape){
+  .orientation-lock{display:flex !important}
+  .device,body>*:not(.orientation-lock){display:none !important}
+  html,body{background:var(--accent) !important}
+}
+
+/* ===== 空区白边彻底清除：禁止整页回弹 ===== */
+.screen > *{min-height:0}
+.screen{scroll-behavior:smooth}
+
 
 /* Status Bar */
 .status-bar{position:absolute;top:0;left:0;right:0;height:var(--sb-h);display:flex;align-items:flex-end;justify-content:space-between;padding:0 24px 6px;font-size:14px;font-weight:600;z-index:50;transition:color 0.3s}
@@ -492,9 +522,67 @@ html.app-mode .home-hero{padding-top:20px}
 .ue-modal-input{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid var(--border);border-radius:var(--r-md);font-size:14px;outline:none;font-family:var(--font);margin-bottom:10px}
 .ue-modal-actions{display:flex;gap:8px}
 .ue-modal-btn{flex:1;padding:10px;border:none;border-radius:var(--r-full);font-size:14px;font-weight:600;cursor:pointer}
+
+/* ===== PWA 安装提示横幅：引导用户"添加到主屏幕"，默认隐藏，JS 按需显示 ===== */
+.pwa-install-banner{
+  position:fixed;left:0;right:0;bottom:0;z-index:999990;
+  background:#fff;border-top:1px solid var(--border);padding:12px 14px calc(14px + env(safe-area-inset-bottom));
+  display:none;align-items:center;gap:10px;box-shadow:0 -4px 20px rgba(0,0,0,0.08);
+}
+html.app-mode .pwa-install-banner{display:none !important} /* APP/PWA 模式下绝不显示 */
+.pwa-install-banner.show{display:flex}
+.pwa-install-ico{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#3B82F6,#8B5CF6);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pwa-install-ico svg{width:22px;height:22px}
+.pwa-install-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.pwa-install-title{font-size:14px;font-weight:700;color:var(--text-primary)}
+.pwa-install-sub{font-size:11px;color:var(--text-secondary);line-height:1.3}
+.pwa-install-btn{padding:9px 16px;border:none;border-radius:var(--r-full);background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;white-space:nowrap}
+.pwa-install-btn:active{transform:scale(0.96)}
+.pwa-install-close{width:32px;height:32px;border:none;background:var(--bg);border-radius:50%;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pwa-install-close svg{width:16px;height:16px;pointer-events:none}
 </style>
 </head>
 <body>
+<!-- 横屏锁定提示：横屏时显示"请把手机转回竖屏" -->
+<div class="orientation-lock" id="orientationLock">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <rect x="6" y="2.5" width="12" height="19" rx="2.5" ry="2.5"/>
+    <line x1="10.5" y1="19" x2="13.5" y2="19"/>
+    <path d="M17 7l4-4-4-4"/>
+    <path d="M21 3h-6a3 3 0 0 1-3-3"/>
+  </svg>
+  <div>请把手机转回竖屏使用</div>
+</div>
+<!-- PWA 安装提示横幅：仅浏览器模式下显示，引导用户"添加到主屏幕"获得无地址栏的原生 App 体验 -->
+<div class="pwa-install-banner" id="pwaInstallBanner">
+  <div class="pwa-install-ico">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+  </div>
+  <div class="pwa-install-body">
+    <div class="pwa-install-title">添加到主屏幕</div>
+    <div class="pwa-install-sub">变成原生 App，无浏览器地址栏，体验更流畅</div>
+  </div>
+  <button class="pwa-install-btn" id="pwaInstallBtn">安装</button>
+  <button class="pwa-install-close" id="pwaInstallClose" aria-label="关闭">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+</div>
+<!-- APP 模式提前检测脚本：在 JS 执行前就把 html.app-mode 加上，避免首屏先显示手机壳再跳全屏 -->
+<script>
+(function(){
+  try{
+    var htmlEl=document.documentElement;
+    var inStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+                    || (window.navigator.standalone === true)
+                    || /\bapp=1\b/i.test(window.location.search)
+                    || /WebView|wv\)/i.test(navigator.userAgent);
+    var smallScreen = window.innerWidth <= 600 || window.screen.width <= 600;
+    if(inStandalone || smallScreen){
+      htmlEl.classList.add('app-mode');
+    }
+  }catch(e){}
+})();
+</script>
 <div class="device" id="device">
 <!-- Loading Overlay -->
 <div class="loading-overlay" id="loadingOverlay">
@@ -2321,7 +2409,7 @@ function applyAvatarFromDataURL(dataUrl){
       var sx=(img.width-minDim)/2;
       var sy=(img.height-minDim)/2;
       ctx.drawImage(img,sx,sy,minDim,minDim,0,0,size,size);
-      var compressed=canvas.toDataURL('image/jpeg',0.85);
+      var compressed=canvas.toDataURL('image/jpeg',0.75);
       setAvatarImage(compressed);
       applyAvatarTo(document.getElementById('pfAvatar'));
       showToast('头像已更新');
@@ -2597,19 +2685,19 @@ function closeCamera(){
   hidePreview();
   goBack();
 }
-// 把一张照片 dataURL 压缩到合理尺寸（最大边 1280，jpeg 0.7），避免 dataURL 过大
+// 把一张照片 dataURL 压缩到合理尺寸（最大边 1024，jpeg 0.6），避免 dataURL 过大导致 TiDB 存储失败
 function compressPhotoAsync(dataUrl,cb){
   try{
     var img=new Image();
     img.onload=function(){
-      var maxSide=1280;
+      var maxSide=1024;
       var w=img.width,h=img.height;
       var scale=Math.min(1,maxSide/Math.max(w,h));
       var cw=Math.round(w*scale),ch=Math.round(h*scale);
       var c=document.createElement('canvas');
       c.width=cw;c.height=ch;
       c.getContext('2d').drawImage(img,0,0,cw,ch);
-      cb(c.toDataURL('image/jpeg',0.7));
+      cb(c.toDataURL('image/jpeg',0.6));
     };
     img.onerror=function(){cb(dataUrl);};
     img.src=dataUrl;
@@ -2620,10 +2708,14 @@ function capturePhoto(){
   var v=document.getElementById('camVideo');
   if(v&&v.srcObject&&v.videoWidth>0){
     try{
+      var maxSide=1024;
+      var w=v.videoWidth,h=v.videoHeight;
+      var scale=Math.min(1,maxSide/Math.max(w,h));
+      var cw=Math.round(w*scale),ch=Math.round(h*scale);
       var c=document.createElement('canvas');
-      c.width=v.videoWidth;c.height=v.videoHeight;
-      c.getContext('2d').drawImage(v,0,0);
-      photoData=c.toDataURL('image/jpeg',0.7);
+      c.width=cw;c.height=ch;
+      c.getContext('2d').drawImage(v,0,0,cw,ch);
+      photoData=c.toDataURL('image/jpeg',0.6);
     }catch(e){photoData=null;}
   }
   // —— 头像拍摄模式：把拍到的照片应用为头像，不发布到社区 ——
@@ -2923,6 +3015,27 @@ function _runInitPipeline(){
       function unpack(r, fallback){return (r&&r.ok)?r.v:fallback;}
       NOTIFICATIONS=unpack(results[0],[]);
       FEEDS=unpack(results[1],[]);
+      // 规范化 FEEDS 字段：确保 photo / photos / isImage 完整（TiDB 读回的 feed 可能缺某个字段）
+      FEEDS.forEach(function(f){
+        if(!f.photo && f.photos && f.photos.length) f.photo = f.photos[0];
+        if(!f.photos && f.photo) f.photos = [f.photo];
+        // isImage=true: 只要 photo 是 data URL，或者 photos 数组非空且第一张是 data URL
+        var firstImage = (typeof f.photo==='string')?f.photo:((f.photos&&f.photos[0])||'');
+        if(typeof firstImage !== 'string') firstImage='';
+        if(f.isImage===undefined){
+          f.isImage = firstImage.indexOf('data:')===0;
+        }
+        // 如果 photo 存的是颜色名（blue/orange等），但 photos[0] 有真实 data URL，photo 强制改回 data URL
+        if(typeof f.photo==='string' && f.photo.length<30 && f.photo.indexOf('data:')<0
+           && f.photos && f.photos.length && typeof f.photos[0]==='string' && f.photos[0].indexOf('data:')===0){
+          f.photo = f.photos[0];
+          f.isImage = true;
+        }
+        if(!f.comments_list) f.comments_list=[];
+        if(typeof f.likes!=='number') f.likes=0;
+        if(typeof f.comments!=='number') f.comments=0;
+        if(typeof f.liked!=='boolean') f.liked=false;
+      });
       // RANK_DATA / SOURCE_DATA 已废弃：排行榜改用 ENGINE_SOURCES + /api/weather 返回的 accuracy 数据
       hideLoadingOverlay();
       restoreSession().then(function(){
@@ -3015,9 +3128,71 @@ document.addEventListener('keydown', function(e){
 }, {passive:false});
 
 // ===== 锁定竖屏方向（如果 API 支持）=====
-if(screen.orientation && screen.orientation.lock){
-  screen.orientation.lock('portrait').catch(function(){ /* 部分浏览器仅在 PWA 全屏下支持，忽略失败 */ });
+function _lockOrientation(){
+  try{
+    if(screen.orientation && screen.orientation.lock){
+      screen.orientation.lock('portrait-primary').catch(function(){});
+    }
+    // 兼容老版 API
+    if(screen.lockOrientation){ screen.lockOrientation('portrait-primary'); }
+    else if(screen.mozLockOrientation){ screen.mozLockOrientation('portrait-primary'); }
+    else if(screen.msLockOrientation){ screen.msLockOrientation('portrait-primary'); }
+  }catch(e){}
+  // 再做一次 DOM 检查：如果是横屏，强制显示遮罩（兜底 CSS media query）
+  var w=window.innerWidth, h=window.innerHeight;
+  var lock=document.getElementById('orientationLock');
+  if(lock && w > h){ lock.style.setProperty('display','flex','important'); }
 }
+_lockOrientation();
+// 监听旋转事件 + resize，双重锁定
+window.addEventListener('orientationchange', function(){ setTimeout(_lockOrientation, 100); setTimeout(_lockOrientation, 500); });
+window.addEventListener('resize', function(){ setTimeout(_lockOrientation, 50); });
+
+// ===== 首次用户交互后尝试进入全屏（隐藏浏览器地址栏上下条，更像原生 App）=====
+function _tryEnterFullscreen(){
+  var el=document.documentElement;
+  try{
+    if(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) return;
+    if(el.requestFullscreen){ el.requestFullscreen().catch(function(){}); }
+    else if(el.webkitRequestFullscreen){ el.webkitRequestFullscreen(); }
+    else if(el.mozRequestFullScreen){ el.mozRequestFullScreen(); }
+    else if(el.msRequestFullscreen){ el.msRequestFullscreen(); }
+  }catch(e){}
+}
+// iOS Safari：通过 window.scrollTo 把页面滚到顶部来隐藏地址栏（配合 standalone 模式）
+function _hideSafariBars(){
+  try{
+    window.scrollTo(0,0);
+    setTimeout(function(){ window.scrollTo(0,0); },100);
+  }catch(e){}
+}
+document.addEventListener('touchstart', function _tsOnce(){
+  _tryEnterFullscreen();
+  _hideSafariBars();
+  document.removeEventListener('touchstart', _tsOnce);
+}, {passive:true, once:true});
+document.addEventListener('click', function _clOnce(){
+  _tryEnterFullscreen();
+  _hideSafariBars();
+  document.removeEventListener('click', _clOnce);
+}, {once:true});
+
+// ===== iOS Safari 边缘左滑回退拦截 =====
+// 触摸开始时如果在屏幕左边缘 15px 范围内，记录并在移动过程中 preventDefault
+var _edgeTouchStartX = -1;
+document.addEventListener('touchstart', function(e){
+  if(e.touches && e.touches.length === 1){
+    var t=e.touches[0];
+    if(t.clientX <= 25 || t.clientX >= window.innerWidth - 25){ _edgeTouchStartX = t.clientX; }
+    else{ _edgeTouchStartX = -1; }
+  }
+}, {passive:true});
+document.addEventListener('touchmove', function(e){
+  if(_edgeTouchStartX >= 0 && e.touches && e.touches.length === 1){
+    var dx = e.touches[0].clientX - _edgeTouchStartX;
+    if(Math.abs(dx) > 10){ e.preventDefault(); }
+  }
+}, {passive:false});
 
 // ===== 设备自适应缩放：让 844px 高的手机框完整适配任意视口，避免首页被裁剪 =====
 // 注意：app-mode 下设备框已填满屏幕，无需缩放
@@ -3030,6 +3205,48 @@ function fitDevice(){
 }
 window.addEventListener('resize',fitDevice);
 fitDevice();
+
+// ===== PWA 安装提示横幅（仅当用户是在浏览器内访问且支持 beforeinstallprompt 时显示）=====
+window._deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', function(e){
+  e.preventDefault();
+  window._deferredPrompt = e;
+  _showInstallBanner();
+});
+function _showInstallBanner(){
+  try{
+    var htmlEl=document.documentElement;
+    if(htmlEl.classList.contains('app-mode')) return; // APP 模式下不展示
+    // iOS Safari：beforeinstallprompt 不支持，UA 判断后也展示横幅（引导用户点 Safari 分享→添加到主屏幕）
+    var isIOSSafari = /iPhone|iPad|iPod/i.test(navigator.userAgent) && /Safari/i.test(navigator.userAgent) && !/CriOS|FxiOS|EdgiOS/i.test(navigator.userAgent);
+    var banner = document.getElementById('pwaInstallBanner');
+    var btn = document.getElementById('pwaInstallBtn');
+    var closeBtn = document.getElementById('pwaInstallClose');
+    if(!banner) return;
+    if(window._deferredPrompt || isIOSSafari){
+      banner.classList.add('show');
+    }
+    if(btn){
+      btn.onclick = function(){
+        if(window._deferredPrompt){
+          window._deferredPrompt.prompt();
+          window._deferredPrompt.userChoice.then(function(){
+            banner.classList.remove('show');
+            window._deferredPrompt = null;
+          }).catch(function(){});
+        }else if(isIOSSafari){
+          // iOS Safari 无法自动调安装弹窗，只能提示用户手动操作
+          alert('请点击浏览器底部中间的「分享」按钮 → 选择「添加到主屏幕」，即可安装为无地址栏的原生 App。');
+        }
+      };
+    }
+    if(closeBtn){
+      closeBtn.onclick = function(){ banner.classList.remove('show'); };
+    }
+  }catch(e){}
+}
+// 3 秒后主动触发一次（覆盖 iOS Safari 等不抛 beforeinstallprompt 的场景）
+window.addEventListener('load', function(){ setTimeout(_showInstallBanner, 3000); });
 
 // ===== PWA Service Worker 注册（仅生产 HTTPS 环境，本地 localhost 也支持）=====
 if('serviceWorker' in navigator){
