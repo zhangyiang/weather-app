@@ -189,10 +189,10 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .air-badge{display:inline-flex;align-items:center;gap:4px;background:var(--success);color:#fff;padding:4px 12px;border-radius:var(--r-full);font-size:12px;font-weight:600}
 
 /* Leaderboard */
-.lb-header{text-align:center;padding:12px 16px 8px}
+.lb-header{text-align:center;padding:12px 16px 8px;flex-shrink:0}
 .lb-header h2{font-size:18px;font-weight:700}
 .lb-header p{font-size:12px;color:var(--text-secondary);margin-top:2px}
-.lb-tabs{display:flex;gap:8px;padding:8px 16px 12px}
+.lb-tabs{display:flex;gap:8px;padding:8px 16px 12px;flex-shrink:0}
 .lb-tab{flex:1;text-align:center;padding:8px 0;font-size:13px;font-weight:500;color:var(--text-secondary);background:var(--card);border-radius:var(--r-md);border:1px solid var(--border);cursor:pointer}
 .lb-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .lb-list{padding:0 16px 24px;display:flex;flex-direction:column;gap:10px;flex-shrink:0}
@@ -213,7 +213,7 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .lb-trend.down{color:var(--danger)}
 
 /* Source Detail */
-.sd-header{padding:12px 16px;display:flex;align-items:center;gap:12px}
+.sd-header{padding:12px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
 .back-btn{width:36px;height:36px;border-radius:50%;background:var(--card);display:flex;align-items:center;justify-content:center;cursor:pointer;border:1px solid var(--border)}
 .back-btn svg{width:18px;height:18px}
 .sd-title{font-size:17px;font-weight:700}
@@ -252,9 +252,9 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .ad-section p{font-size:13px;line-height:1.6;color:var(--text-secondary)}
 
 /* Community */
-.cm-header{text-align:center;padding:12px 16px 8px}
+.cm-header{text-align:center;padding:12px 16px 8px;flex-shrink:0}
 .cm-header h2{font-size:18px;font-weight:700}
-.cm-tabs{display:flex;gap:0;padding:8px 16px 12px;border-bottom:1px solid var(--border)}
+.cm-tabs{display:flex;gap:0;padding:8px 16px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
 .cm-tab{flex:1;text-align:center;padding:6px 0;font-size:13px;font-weight:500;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent}
 .cm-tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 .cm-list{padding:8px 16px 24px;display:flex;flex-direction:column;gap:12px;flex-shrink:0}
@@ -355,8 +355,8 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .nt-action-btn.following{background:var(--bg);color:var(--text-secondary);border-color:var(--border-dark)}
 
 /* Profile */
-.pf-header{display:block}
-.pf-header{background:linear-gradient(135deg,#3B82F6,#6366F1);color:#fff;padding:24px 20px 28px;text-align:center;position:relative}
+.pf-header{display:block;flex-shrink:0}
+.pf-header{background:linear-gradient(135deg,#3B82F6,#6366F1);color:#fff;padding:24px 20px 28px;text-align:center;position:relative;flex-shrink:0}
 .pf-avatar{width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 8px;border:3px solid rgba(255,255,255,0.3)}
 .pf-name{font-size:18px;font-weight:700}
 .pf-id{font-size:12px;opacity:0.7;margin-top:2px}
