@@ -59,7 +59,7 @@ html.app-mode .status-bar{display:none}
 html.app-mode .home-hero{padding-top:20px}
 html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(var(--tab-h) + env(safe-area-inset-bottom))}
 
-/* ===== 竖屏锁定强制：横屏时强制把页面旋转 90 度 + 给出"请转回竖屏"遮罩 ===== */
+/* ===== 竖屏锁定：仅在手机屏（≤900px宽度）横屏时显示遮罩，桌面端不受影响 ===== */
 .orientation-lock{
   position:fixed;inset:0;z-index:999999;background:var(--accent);color:#fff;
   display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
@@ -67,12 +67,13 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 }
 .orientation-lock svg{width:80px;height:80px;animation:rotateHint 2s ease-in-out infinite}
 @keyframes rotateHint{0%,100%{transform:rotate(0)}50%{transform:rotate(-90deg)}}
-/* 横屏时：只要屏幕是横的，不管什么设备/什么模式，都强制显示遮罩（不再限制 max-width）*/
-@media (orientation:landscape){
+/* 手机横屏时：只在屏幕宽度 ≤ 900px（即手机/小平板横屏）才显示遮罩 */
+@media (orientation:landscape) and (max-width:900px){
   .orientation-lock{display:flex !important}
   .device,body>*:not(.orientation-lock){display:none !important}
   html,body{background:var(--accent) !important}
 }
+/* 桌面浏览器（>900px）即使横屏也不触发遮罩，保持手机预览框 */
 
 /* ===== 空区白边彻底清除：禁止整页回弹 ===== */
 .screen > *{min-height:0}
@@ -3132,21 +3133,28 @@ document.addEventListener('keydown', function(e){
   }
 }, {passive:false});
 
-// ===== 锁定竖屏方向（如果 API 支持）=====
+// ===== 锁定竖屏方向（仅手机/APP模式尝试锁定；桌面端不干扰）=====
 function _lockOrientation(){
-  try{
-    if(screen.orientation && screen.orientation.lock){
-      screen.orientation.lock('portrait-primary').catch(function(){});
-    }
-    // 兼容老版 API
-    if(screen.lockOrientation){ screen.lockOrientation('portrait-primary'); }
-    else if(screen.mozLockOrientation){ screen.mozLockOrientation('portrait-primary'); }
-    else if(screen.msLockOrientation){ screen.msLockOrientation('portrait-primary'); }
-  }catch(e){}
-  // 再做一次 DOM 检查：如果是横屏，强制显示遮罩（兜底 CSS media query）
   var w=window.innerWidth, h=window.innerHeight;
   var lock=document.getElementById('orientationLock');
-  if(lock && w > h){ lock.style.setProperty('display','flex','important'); }
+  // 仅在手机屏（≤900px）且处于横屏时才显示遮罩
+  if(lock && w <= 900 && w > h){
+    lock.style.setProperty('display','flex','important');
+    return;
+  }
+  // 否则隐藏遮罩（桌面端 / 手机竖屏）
+  if(lock){ lock.style.removeProperty('display'); }
+  // 仅在 APP 模式下尝试 API 锁定（桌面浏览器大多不支持或没必要）
+  if(document.documentElement.classList.contains('app-mode')){
+    try{
+      if(screen.orientation && screen.orientation.lock){
+        screen.orientation.lock('portrait-primary').catch(function(){});
+      }
+      if(screen.lockOrientation){ screen.lockOrientation('portrait-primary'); }
+      else if(screen.mozLockOrientation){ screen.mozLockOrientation('portrait-primary'); }
+      else if(screen.msLockOrientation){ screen.msLockOrientation('portrait-primary'); }
+    }catch(e){}
+  }
 }
 _lockOrientation();
 // 监听旋转事件 + resize，双重锁定
