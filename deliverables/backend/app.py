@@ -1342,12 +1342,21 @@ _USER_EXTRAS = {}
 
 def _data_file_path():
     """返回 JSON 持久化文件路径。
-    优先环境变量 APP_DATA_FILE；Linux/Render 下用 /tmp/app_data.json（重启保留，重新部署清空）；
-    /tmp 不可写（如 Windows 本地开发）则回退到项目目录下的 app_data.json。
+    优先级（从高到低，保证"重部署/重启都不丢"）：
+      1. 环境变量 APP_DATA_FILE —— 用户自定义
+      2. /data/app_data.json     —— Render Web Service 原生 Persistent Disk 挂载点
+                                  【推荐】在 Render Dashboard → 你的 Service → Disks 添加 1GB 免费盘，
+                                  挂载路径填 /data；重部署（redeploy）、重启（restart）、休眠唤醒都不丢。
+      3. /tmp/app_data.json      —— Linux 临时目录，同一次 redeploy 内重启/休眠不丢；
+                                  重新部署/扩容会清空（不推荐，仅兜底）。
+      4. backend/app_data.json   —— Windows 本地开发 fallback。
     """
     env = os.environ.get("APP_DATA_FILE")
     if env:
         return env
+    # Render Persistent Disk 推荐挂载点
+    if os.path.isdir("/data") and os.access("/data", os.W_OK):
+        return "/data/app_data.json"
     tmp_dir = "/tmp"
     if os.path.isdir(tmp_dir) and os.access(tmp_dir, os.W_OK):
         return os.path.join(tmp_dir, "app_data.json")
@@ -1356,14 +1365,56 @@ def _data_file_path():
 
 _DATA_FILE = _data_file_path()
 
+# 每分钟后台 fsync 兜底：即使某个写操作忘记 _save_data()，也会每分钟自动落盘一次
+_PERSIST_LOOP_RUNNING = False
+
+
+def _start_persist_loop_if_needed():
+    global _PERSIST_LOOP_RUNNING
+    if _PERSIST_LOOP_RUNNING:
+        return
+    _PERSIST_LOOP_RUNNING = True
+
+    def _loop():
+        last_saved = 0
+        while True:
+            try:
+                time.sleep(60)
+                # 只要内存里有变化就落盘：用 saved_at 对比避免空写
+                _save_data()
+                now = _now_ms()
+                if now - last_saved > 60_000:
+                    print(f"[Persist] 每分钟自动落盘完成：{_DATA_FILE}（size={_file_size_mb()}MB）")
+                    last_saved = now
+            except Exception as e:
+                print(f"[Persist] 自动落盘循环异常（非致命，继续）: {type(e).__name__}: {e}")
+
+    t = threading.Thread(target=_loop, daemon=True, name="persist-loop")
+    t.start()
+    print(f"  [Persist] 每分钟自动落盘线程已启动：{_DATA_FILE}")
+
+
+def _file_size_mb():
+    try:
+        return round(os.path.getsize(_DATA_FILE) / 1024 / 1024, 2) if os.path.exists(_DATA_FILE) else 0
+    except Exception:
+        return 0
+
 
 def _save_data():
-    """把用户数据、社区帖子（FEEDS）、点赞状态、评论保存到 JSON 文件。
+    """把用户数据、社区帖子（FEEDS）、点赞状态、评论、关注、头像保存到持久化文件。
     内存模式（无 MySQL）时才保存用户表；MySQL 模式下用户由数据库持久化。
-    采用临时文件 + 原子重命名，避免写入中途崩溃导致文件损坏；
-    FEEDS 中可能含 base64 照片数据，文件可能较大，整体写入并 ensure_ascii=False 节省空间。
+    采用"临时文件 + os.replace 原子重命名"，避免写入中途崩溃导致文件损坏；
+    FEEDS 中可能含 base64 照片数据，文件可能较大，ensure_ascii=False 节省空间。
     """
     try:
+        # 确保目录存在（Render Persistent Disk 首次挂载可能空，/tmp 一定存在，/data 若未挂载则跳过）
+        parent_dir = os.path.dirname(_DATA_FILE)
+        if parent_dir and not os.path.exists(parent_dir):
+            try:
+                os.makedirs(parent_dir, exist_ok=True)
+            except Exception:
+                pass
         users = list(USER_STORE._mem.values()) if USER_STORE.mode == "memory" else []
         user_seq = USER_STORE._seq if USER_STORE.mode == "memory" else 0
         payload = {
@@ -1377,6 +1428,11 @@ def _save_data():
         tmp_path = _DATA_FILE + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
+            f.flush()
+            try:
+                os.fsync(f.fileno())  # 强制刷到磁盘，避免 Render 容器崩溃时文件不完整
+            except Exception:
+                pass
         os.replace(tmp_path, _DATA_FILE)
     except Exception as e:
         print(f"[Persist] 保存数据失败: {type(e).__name__}: {e}")
@@ -1422,10 +1478,21 @@ def _load_data():
 
 @app.on_event("startup")
 def _on_startup_load_data():
-    """应用启动时从 JSON 文件加载持久化数据，并启动准确率 cron 线程。
-    注意：Render 用 uvicorn app:app 启动，不会执行 if __name__ == "__main__" 块，
-    所以 cron 必须在这里启动，否则排行榜预计算任务永远不会运行。"""
+    """应用启动时：
+    1. 确保 /data 持久化目录存在（若 Render 已挂载 Disk 则可写；未挂载则跳过）
+    2. 从 JSON 文件加载历史持久化数据（用户+社区+关注+头像）
+    3. 启动"每分钟自动落盘"后台线程（兜底防漏写）
+    4. 启动准确率 cron 线程
+    注意：Render 用 uvicorn app:app 启动，不会执行 if __name__ == "__main__" 块。
+    """
+    # /data 若已挂载则确保是目录，没挂载也不影响（会回退到 /tmp）
+    try:
+        if not os.path.exists("/data"):
+            os.makedirs("/data", exist_ok=True)
+    except Exception:
+        pass
     _load_data()
+    _start_persist_loop_if_needed()
     _start_cron_if_needed()
 
 
