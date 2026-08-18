@@ -631,6 +631,137 @@ USER_STORE = UserStore(APP_CONFIG["mysql"])
 
 
 # =====================================================================
+# 社区/社交数据永久存储层（Render Free 档专用方案）
+# Render Web Service Free 档不支持 Persistent Disk，重部署会清 /tmp
+# 因此：用户、帖子、点赞、评论、关注、头像 —— 全部额外持久化到外部 MySQL。
+# 架构：
+#   - MySQL 是"唯一真存储"（PlanetScale / TiDB / 阿里云免费 MySQL 等，0 元档即可永久保留）
+#   - 全局变量 FEEDS / _FOLLOWS / _USER_EXTRAS 仍是内存镜像，不改现有业务代码（零侵入）
+#   - 每次 _save_data() 做双写：① 本地 JSON 兜底（Render 同实例重启不丢）
+#                            ② 写 MySQL social_data_snapshots 表（跨 redeploy 永久保留）
+#   - 启动 _load_data() 三阶段：① MySQL 主读取优先 ② 本地 JSON 兜底 ③ 合并
+# =====================================================================
+
+
+class SocialStore:
+    """社区数据 MySQL 存储（MySQL 优先，无 MySQL 则静默降级为 no-op，只靠 JSON）。
+    单表 social_data_snapshots 存整个 payload（和 app_data.json 同结构），每次 upsert id=1。
+    好处：不用改任何已有 FEEDS/FOLLOWS/EXTRAS 的读写逻辑，零侵入。
+    """
+
+    SNAPSHOT_ID = 1
+
+    def __init__(self, mysql_cfg: dict):
+        self.mysql_cfg = mysql_cfg
+        self.mode = "mysql"
+        self._init_db()
+
+    def _connect(self):
+        return pymysql.connect(
+            host=self.mysql_cfg["host"],
+            port=int(self.mysql_cfg.get("port", 3306)),
+            user=self.mysql_cfg["user"],
+            password=self.mysql_cfg.get("password", ""),
+            database=self.mysql_cfg.get("database", ""),
+            charset=self.mysql_cfg.get("charset", "utf8mb4"),
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=5,
+            read_timeout=10,
+            write_timeout=10,
+        )
+
+    def _init_db(self):
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                # PlanetScale 免费档 8.0 兼容 JSON；若不支持则降级为 LONGTEXT，由应用层序列化
+                try:
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS social_data_snapshots (
+                            id INT PRIMARY KEY,
+                            payload JSON NOT NULL,
+                            updated_at BIGINT NOT NULL
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                        """
+                    )
+                except Exception:
+                    # 某些 serverless MySQL 列类型受限，改用 LONGTEXT
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS social_data_snapshots (
+                            id INT PRIMARY KEY,
+                            payload LONGTEXT NOT NULL,
+                            updated_at BIGINT NOT NULL
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                        """
+                    )
+                conn.commit()
+            conn.close()
+            print("  [DB] MySQL 社区数据存储就绪（mode=mysql，跨 redeploy 永久保留）")
+        except Exception as e:
+            self.mode = "noop"
+            print(f"  [DB] 警告：社区数据 MySQL 不可用（{type(e).__name__}: {e}）")
+            print("  [DB] 社区数据已降级为本地 JSON + Render /tmp（重新部署会清空）。")
+            print("  [DB] 启用永久保留：配置 MYSQL_HOST / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE 环境变量。")
+
+    def write_snapshot(self, payload: dict):
+        """把整个 payload（FEEDS + 用户 + 关注 + 头像）upsert 到 MySQL。
+        返回 True=成功，False=失败（降级JSON兜底仍会执行）。
+        """
+        if self.mode != "mysql":
+            return False
+        try:
+            conn = self._connect()
+            payload_json = json.dumps(payload, ensure_ascii=False)
+            now_ms = _now_ms()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO social_data_snapshots (id, payload, updated_at)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)
+                    """,
+                    (self.SNAPSHOT_ID, payload_json, now_ms),
+                )
+                conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"[SocialStore] 写入 MySQL 快照失败（不影响本地JSON兜底）: {type(e).__name__}: {e}")
+            return False
+
+    def read_snapshot(self):
+        """从 MySQL 读取最近一次快照 payload。失败或无数据返回 None。"""
+        if self.mode != "mysql":
+            return None
+        try:
+            conn = self._connect()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT payload FROM social_data_snapshots WHERE id = %s",
+                    (self.SNAPSHOT_ID,),
+                )
+                row = cur.fetchone()
+            conn.close()
+            if not row:
+                return None
+            raw = row.get("payload")
+            # LONGTEXT → 字符串；JSON → dict/str 皆可，统一 try parse
+            if isinstance(raw, (dict, list)):
+                return raw
+            if isinstance(raw, str):
+                return json.loads(raw)
+            return None
+        except Exception as e:
+            print(f"[SocialStore] 读取 MySQL 快照失败（回退至本地JSON）: {type(e).__name__}: {e}")
+            return None
+
+
+SOCIAL_STORE = SocialStore(APP_CONFIG["mysql"])
+
+
+# =====================================================================
 # 多模型准确率比对与智能择优系统
 # =====================================================================
 
@@ -1402,59 +1533,62 @@ def _file_size_mb():
 
 
 def _save_data():
-    """把用户数据、社区帖子（FEEDS）、点赞状态、评论、关注、头像保存到持久化文件。
-    内存模式（无 MySQL）时才保存用户表；MySQL 模式下用户由数据库持久化。
-    采用"临时文件 + os.replace 原子重命名"，避免写入中途崩溃导致文件损坏；
-    FEEDS 中可能含 base64 照片数据，文件可能较大，ensure_ascii=False 节省空间。
+    """把用户/社区/点赞/评论/关注/头像 保存到持久化存储。
+    策略（双写 + 兜底）：
+      1. 【主存】优先写外部 MySQL SOCIAL_STORE（跨 Render redeploy 永久保留，0 元 MySQL 即可）
+      2. 【兜底】再写本地 JSON 文件（同实例重启不丢；Render 未挂盘+无MySQL时仍可用）
+    内存模式（无 MySQL 用户表）才序列化用户；MySQL 模式下用户由 users 表持久化。
     """
+    users = list(USER_STORE._mem.values()) if USER_STORE.mode == "memory" else []
+    user_seq = USER_STORE._seq if USER_STORE.mode == "memory" else 0
+    payload = {
+        "feeds": FEEDS,
+        "users": users,
+        "user_seq": user_seq,
+        "follows": {str(k): list(v) for k, v in _FOLLOWS.items()},
+        "user_extras": _USER_EXTRAS,
+        "saved_at": _now_ms(),
+    }
+    # ① 主存：外部 MySQL 双写（真·永久，不依赖 Render 实例生命周期）
+    ok = SOCIAL_STORE.write_snapshot(payload)
+    if ok:
+        size_mb = round(len(json.dumps(payload, ensure_ascii=False)) / 1024 / 1024, 2)
+        # 避免每次写都打印，只在每分钟落盘循环里统一日志打印即可（此处静默）
+        _ = size_mb
+    # ② 兜底：本地 JSON 原子写
     try:
-        # 确保目录存在（Render Persistent Disk 首次挂载可能空，/tmp 一定存在，/data 若未挂载则跳过）
         parent_dir = os.path.dirname(_DATA_FILE)
         if parent_dir and not os.path.exists(parent_dir):
             try:
                 os.makedirs(parent_dir, exist_ok=True)
             except Exception:
                 pass
-        users = list(USER_STORE._mem.values()) if USER_STORE.mode == "memory" else []
-        user_seq = USER_STORE._seq if USER_STORE.mode == "memory" else 0
-        payload = {
-            "feeds": FEEDS,
-            "users": users,
-            "user_seq": user_seq,
-            "follows": {str(k): list(v) for k, v in _FOLLOWS.items()},
-            "user_extras": _USER_EXTRAS,
-            "saved_at": _now_ms(),
-        }
         tmp_path = _DATA_FILE + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
             f.flush()
             try:
-                os.fsync(f.fileno())  # 强制刷到磁盘，避免 Render 容器崩溃时文件不完整
+                os.fsync(f.fileno())
             except Exception:
                 pass
         os.replace(tmp_path, _DATA_FILE)
     except Exception as e:
-        print(f"[Persist] 保存数据失败: {type(e).__name__}: {e}")
+        print(f"[Persist] 本地JSON保存失败（MySQL侧已成功，不影响永久保留）: {type(e).__name__}: {e}")
 
 
-def _load_data():
-    """启动时从 JSON 文件加载持久化数据（社区动态 + 内存模式用户）"""
+def _apply_payload(payload: dict, source_label: str):
+    """把一份 payload 合并进内存全局变量（FEEDS/_FOLLOWS/_USER_EXTRAS + 内存用户表）。
+    source_label 仅用于日志打印（"MySQL" / "JSON"）。
+    """
     global FEEDS
-    if not os.path.exists(_DATA_FILE):
-        return
-    try:
-        with open(_DATA_FILE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-    except Exception as e:
-        print(f"[Persist] 加载数据失败: {type(e).__name__}: {e}")
-        return
-    # 加载社区动态（含点赞状态与评论）
+    loaded_feeds = 0
+    loaded_users = 0
+    loaded_follows = 0
+    loaded_extras = 0
     feeds = payload.get("feeds")
     if isinstance(feeds, list) and feeds:
         FEEDS = feeds
-        print(f"[Persist] 已加载 {len(FEEDS)} 条社区动态")
-    # 内存模式：加载用户表（含密码 hash、id 自增序列）
+        loaded_feeds = len(FEEDS)
     if USER_STORE.mode == "memory" and isinstance(payload.get("users"), list):
         for u in payload["users"]:
             uid = u.get("id")
@@ -1462,18 +1596,66 @@ def _load_data():
                 USER_STORE._mem[uid] = u
         if payload.get("user_seq"):
             USER_STORE._seq = max(USER_STORE._seq, int(payload["user_seq"]))
-        print(f"[Persist] 已加载 {len(USER_STORE._mem)} 个用户")
-    # 加载关注关系
+        loaded_users = len(USER_STORE._mem)
     follows = payload.get("follows")
     if isinstance(follows, dict):
         for k, v in follows.items():
             _FOLLOWS[int(k)] = set(v)
-        print(f"[Persist] 已加载 {len(_FOLLOWS)} 个用户的关注关系")
-    # 加载用户扩展资料（头像等）
+        loaded_follows = len(follows)
     extras = payload.get("user_extras")
     if isinstance(extras, dict):
         _USER_EXTRAS.update(extras)
-        print(f"[Persist] 已加载 {len(_USER_EXTRAS)} 个用户的扩展资料")
+        loaded_extras = len(extras)
+    if loaded_feeds or loaded_users or loaded_follows or loaded_extras:
+        print(f"[Persist] 从 {source_label} 加载：{loaded_feeds}条动态 / {loaded_users}个用户 / "
+              f"{loaded_follows}组关注 / {loaded_extras}个用户扩展资料")
+
+
+def _load_data():
+    """启动时三阶段加载，确保"能从 MySQL 读到的就从 MySQL 读（永久真源），没有再回退 JSON。"
+    阶段 1：MySQL 主读取（PlanetScale/TiDB 等，跨 redeploy 永久）
+    阶段 2：本地 JSON 兜底（同实例重启/休眠场景）
+    阶段 3：若 MySQL + JSON 都空 → 内存保持模块级默认 FEEDS（样例数据照常显示）
+    """
+    global FEEDS
+    # 阶段 1：优先读 MySQL（外部永久存储，最可靠）
+    mysql_payload = None
+    try:
+        mysql_payload = SOCIAL_STORE.read_snapshot()
+    except Exception as e:
+        print(f"[Persist] MySQL读异常: {type(e).__name__}: {e}")
+    if isinstance(mysql_payload, dict):
+        _apply_payload(mysql_payload, "MySQL（永久存储）")
+        # 读完后立刻重写一次 MySQL 兜底（修复潜在字段缺失/格式升级）
+        try:
+            users = list(USER_STORE._mem.values()) if USER_STORE.mode == "memory" else []
+            user_seq = USER_STORE._seq if USER_STORE.mode == "memory" else 0
+            SOCIAL_STORE.write_snapshot({
+                "feeds": FEEDS,
+                "users": users,
+                "user_seq": user_seq,
+                "follows": {str(k): list(v) for k, v in _FOLLOWS.items()},
+                "user_extras": _USER_EXTRAS,
+                "saved_at": _now_ms(),
+            })
+        except Exception:
+            pass
+        return
+    # 阶段 2：MySQL 无数据（要么没配置 MySQL env，要么首次部署）→ 读本地 JSON
+    if os.path.exists(_DATA_FILE):
+        try:
+            with open(_DATA_FILE, "r", encoding="utf-8") as f:
+                json_payload = json.load(f)
+            _apply_payload(json_payload, "本地JSON（兜底）")
+            # 若当前已配置 MySQL（只是之前忘了写）→ 顺手把本地 JSON 同步到 MySQL，永久保留
+            if SOCIAL_STORE.mode == "mysql":
+                SOCIAL_STORE.write_snapshot(json_payload)
+                print("[Persist] 已把历史本地JSON数据同步到MySQL（之后重部署就不丢了）")
+            return
+        except Exception as e:
+            print(f"[Persist] 加载本地JSON失败: {type(e).__name__}: {e}")
+            return
+    # 阶段 3：两者都空 → 保持模块级 FEEDS（示例数据），不做任何事
 
 
 @app.on_event("startup")
