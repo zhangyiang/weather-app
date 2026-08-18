@@ -1791,6 +1791,7 @@ function deleteFeed(id){
   var snapshot=JSON.parse(JSON.stringify(f));
   FEEDS.splice(idx,1);
   if(S.photos>0)S.photos--;
+  _saveUserStats();
   refreshAfterFeedDelete(id);
   renderProfile();
   api.deleteFeed(id).then(function(res){
@@ -1798,6 +1799,7 @@ function deleteFeed(id){
       // 回滚
       FEEDS.splice(idx,0,snapshot);
       S.photos++;
+      _saveUserStats();
       refreshAfterFeedDelete(null);
       renderProfile();
       if(res&&res.status===401){showToast('请先登录');showLoginModal();}
@@ -1808,6 +1810,7 @@ function deleteFeed(id){
   }).catch(function(){
     FEEDS.splice(idx,0,snapshot);
     S.photos++;
+    _saveUserStats();
     refreshAfterFeedDelete(null);
     renderProfile();
     showToast('网络异常，删除已恢复');
@@ -1952,6 +1955,12 @@ function toggleLike(id,el){
   var prevLikes=f.likes;
   f.liked=!prevLiked;
   f.likes=prevLikes+(f.liked?1:-1);
+  // 如果是自己发的帖子，更新总获赞数
+  var isMyFeed=isOwnFeed(f);
+  if(isMyFeed){
+    S.likes=(S.likes||0)+(f.liked?1:-1);
+    _saveUserStats();
+  }
   function applyTo(targetEl){
     if(!targetEl)return;
     targetEl.classList.toggle('liked',f.liked);
@@ -1978,6 +1987,7 @@ function toggleLike(id,el){
       // 回滚
       f.liked=prevLiked;
       f.likes=prevLikes;
+      if(isMyFeed){S.likes=(S.likes||0)+(prevLiked?1:-1);_saveUserStats();}
       applyTo(el);
       if(S.feedId===id){
         var fdLike2=document.getElementById('fdLike');
@@ -2002,10 +2012,12 @@ function toggleLike(id,el){
         if(fdLike3&&fdLike3!==el)applyTo(fdLike3);
       }
     }
+    renderProfile();
   }).catch(function(){
     // 网络错误也回滚
     f.liked=prevLiked;
     f.likes=prevLikes;
+    if(isMyFeed){S.likes=(S.likes||0)+(prevLiked?1:-1);_saveUserStats();}
     applyTo(el);
     if(S.feedId===id){
       var fdLike4=document.getElementById('fdLike');
@@ -2283,17 +2295,78 @@ function updateBellBadge(){
 
 // ===== Profile =====
 // 头像持久化（localStorage）：值为 dataURL 字符串
-function getAvatarImage(){ return localStorage.getItem('wb_avatar')||''; }
-function setAvatarImage(dataUrl){ localStorage.setItem('wb_avatar',dataUrl||''); }
+function getAvatarImage(){
+  try{ return localStorage.getItem('wb_avatar')||''; }
+  catch(e){ return ''; }
+}
+function setAvatarImage(dataUrl){
+  try{
+    // 检查数据大小，localStorage 通常限制 5MB
+    if(dataUrl && dataUrl.length > 500*1024){ // 超过 500KB 时警告
+      console.warn('头像数据过大，可能存储失败:', dataUrl.length, 'bytes');
+    }
+    localStorage.setItem('wb_avatar',dataUrl||'');
+    // 验证是否保存成功
+    var verified=localStorage.getItem('wb_avatar');
+    if(verified!==(dataUrl||'')){
+      console.error('头像保存验证失败');
+      return false;
+    }
+    return true;
+  }catch(e){
+    console.error('头像保存失败:', e.message);
+    // localStorage 可能已满，尝试清除旧的非必要数据
+    try{
+      var keys=Object.keys(localStorage);
+      keys.forEach(function(k){
+        if(k.startsWith('wb_') && k!=='wb_token' && k!=='wb_avatar'){
+          // 保留 token 和头像
+        }
+      });
+    }catch(e2){}
+    return false;
+  }
+}
+// 统计数据持久化（localStorage）：保存/读取 photos、likes、following、followers
+function _saveUserStats(){
+  if(!S.username)return;
+  var key='wb_stats_'+S.username;
+  try{
+    var data={photos:S.photos||0,likes:S.likes||0};
+    localStorage.setItem(key,JSON.stringify(data));
+  }catch(e){ console.warn('save stats failed',e); }
+}
+function _loadUserStats(username){
+  if(!username)return{photos:0,likes:0};
+  var key='wb_stats_'+username;
+  try{
+    var raw=localStorage.getItem(key);
+    if(raw){var d=JSON.parse(raw);return{photos:d.photos||0,likes:d.likes||0};}
+  }catch(e){}
+  return{photos:0,likes:0};
+}
 // 渲染头像元素：优先用图片，否则用用户名首字母；保留右下角相机图标 overlay
 var _AVATAR_OVERLAY_HTML='<div style="position:absolute;right:-2px;bottom:-2px;width:22px;height:22px;border-radius:50%;background:var(--accent);border:2px solid #fff;display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" style="width:12px;height:12px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>';
 function applyAvatarTo(el){
   if(!el)return;
   var img=getAvatarImage();
-  if(img){
-    el.innerHTML='<img src="'+img+'" alt="头像" style="width:100%;height:100%;border-radius:50%;object-fit:cover">'+_AVATAR_OVERLAY_HTML;
+  var ch=(S.username||'W').charAt(0).toUpperCase();
+  if(img && img.startsWith('data:')){
+    // 验证 dataURL 有效性
+    var testImg=new Image();
+    testImg.onload=function(){
+      el.innerHTML='<img src="'+img+'" alt="头像" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.parentNode.innerHTML=\''+ch+'\''+_AVATAR_OVERLAY_HTML+'\'">'+_AVATAR_OVERLAY_HTML;
+    };
+    testImg.onerror=function(){
+      // 图片无效，清除无效缓存
+      localStorage.removeItem('wb_avatar');
+      el.innerHTML=ch+_AVATAR_OVERLAY_HTML;
+    };
+    testImg.src=img;
+  }else if(img){
+    // 非 dataURL（可能是 URL），直接使用
+    el.innerHTML='<img src="'+img+'" alt="头像" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.parentNode.innerHTML=\''+ch+'\''+_AVATAR_OVERLAY_HTML+'\'">'+_AVATAR_OVERLAY_HTML;
   }else{
-    var ch=(S.username||'W').charAt(0).toUpperCase();
     el.innerHTML=ch+_AVATAR_OVERLAY_HTML;
   }
 }
@@ -2475,12 +2548,28 @@ function submitUsernameEdit(){
   if(newName.length>20){showToast('用户名最多 20 个字符');return;}
   if(newName===S.username){hideUsernameEditModal();return;}
   var oldName=S.username;
+  // 迁移旧用户名的统计数据到新用户名
+  var oldKey='wb_stats_'+oldName;
+  var newKey='wb_stats_'+newName;
+  try{
+    var oldData=localStorage.getItem(oldKey);
+    if(oldData){
+      // 如果新 key 不存在，直接迁移
+      if(!localStorage.getItem(newKey)){
+        localStorage.setItem(newKey,oldData);
+      }
+      // 删除旧 key
+      localStorage.removeItem(oldKey);
+    }
+  }catch(e){}
   S.username=newName;
   // 同步本地 FEEDS 里自己帖子的 user/owner（保持一致）
   FEEDS.forEach(function(f){
     var owner=f.owner||f.user||'';
     if(owner===oldName){f.user=newName;f.owner=newName;}
   });
+  // 立即保存当前统计到新 key
+  _saveUserStats();
   hideUsernameEditModal();
   renderProfile();
   // 当前在社区页则刷新
@@ -2895,6 +2984,7 @@ function publishPendingPhotos(){
     }
     FEEDS.unshift(feed);
     S.photos=(S.photos||0)+1;
+    _saveUserStats();
     S.pendingPhotos=[];
     hidePreview();
     showToast('已发表到天空社区');
@@ -2958,8 +3048,16 @@ function applyUserProfile(u){
   S.userId = u.userId || ('WB' + u.id);
   S.username = u.username || '';
   S.email = u.email || '';
-  S.photos = u.photos || 0;
-  S.likes = u.likes || 0;
+  // 保存最后登录的用户名，用于网络失败时恢复
+  if(S.username){ localStorage.setItem('wb_last_username', S.username); }
+  // 优先用后端数据，兜底用 localStorage（保证刷新后不丢数据）
+  var lsStats=_loadUserStats(S.username);
+  S.photos = (typeof u.photos==='number' && u.photos>0) ? u.photos : (lsStats.photos||0);
+  S.likes = (typeof u.likes==='number' && u.likes>0) ? u.likes : (lsStats.likes||0);
+  // 如果后端返回了有效数据，用后端数据覆盖 localStorage
+  if(typeof u.photos==='number' || typeof u.likes==='number'){
+    _saveUserStats();
+  }
   renderProfile();
 }
 function restoreSession(){
@@ -2967,8 +3065,34 @@ function restoreSession(){
   if(!t) return Promise.resolve();
   return api.getProfile().then(function(res){
     if(res.ok){ applyUserProfile(res.data); }
-    else { localStorage.removeItem('wb_token'); }
-  }).catch(function(){ localStorage.removeItem('wb_token'); });
+    else {
+      // 后端返回错误，尝试从 localStorage 恢复
+      var savedName=localStorage.getItem('wb_last_username');
+      if(savedName){
+        S.loggedIn=true;
+        S.username=savedName;
+        var stats=_loadUserStats(savedName);
+        S.photos=stats.photos||0;
+        S.likes=stats.likes||0;
+        renderProfile();
+      }else{
+        localStorage.removeItem('wb_token');
+      }
+    }
+  }).catch(function(){
+    // 网络错误，从 localStorage 恢复用户数据
+    var savedName=localStorage.getItem('wb_last_username');
+    if(savedName){
+      S.loggedIn=true;
+      S.username=savedName;
+      var stats=_loadUserStats(savedName);
+      S.photos=stats.photos||0;
+      S.likes=stats.likes||0;
+      renderProfile();
+    }else{
+      localStorage.removeItem('wb_token');
+    }
+  });
 }
 
 // ===== Init =====
