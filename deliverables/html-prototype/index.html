@@ -2372,11 +2372,32 @@ function deleteComment(feedId,commentIdx){
   if(!f||!f.comments_list||commentIdx>=f.comments_list.length)return;
   var c=f.comments_list[commentIdx];
   if(!c||c.name!==S.username){showToast('只能删除自己的评论');return;}
-  // 本地先删除
+  // 本地先删除 + 重新渲染
   f.comments_list.splice(commentIdx,1);
   f.comments=Math.max(0,f.comments-1);
   openFeed(feedId);
   showToast('评论已删除');
+  // 同步后端，失败则恢复
+  var h=authHeader();
+  h['Content-Type']='application/json';
+  fetch('/api/feeds/'+feedId+'/comments/'+commentIdx,{method:'DELETE',headers:h})
+    .then(function(r){return r.json();})
+    .then(function(res){
+      if(!res||!res.ok){
+        // 后端删除失败，恢复评论
+        f.comments_list.splice(commentIdx,0,c);
+        f.comments+=1;
+        openFeed(feedId);
+        showToast('删除失败，请重试');
+      }
+    })
+    .catch(function(){
+      // 网络错误，恢复评论
+      f.comments_list.splice(commentIdx,0,c);
+      f.comments+=1;
+      openFeed(feedId);
+      showToast('网络异常，删除失败');
+    });
 }
 // 更新详情页评论数显示
 function updateFdCommentCount(num){

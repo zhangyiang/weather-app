@@ -2626,6 +2626,26 @@ def add_comment(feed_id: int, req: CommentRequest, authorization: str = Header(N
     return JSONResponse(status_code=404, content={"error": "动态不存在"})
 
 
+@app.delete("/api/feeds/{feed_id}/comments/{comment_idx}", tags=["社区"], summary="删除评论")
+def delete_comment(feed_id: int, comment_idx: int, authorization: str = Header(None)):
+    """删除指定动态中的评论（仅评论作者本人可删）"""
+    user = _require_user(authorization)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "请先登录"})
+    for f in FEEDS:
+        if f["id"] == feed_id:
+            cl = f.get("comments_list", [])
+            if comment_idx < 0 or comment_idx >= len(cl):
+                return JSONResponse(status_code=404, content={"error": "评论不存在"})
+            if cl[comment_idx].get("name") != user["username"]:
+                return JSONResponse(status_code=403, content={"error": "只能删除自己的评论"})
+            cl.pop(comment_idx)
+            f["comments"] = max(0, f.get("comments", 0) - 1)
+            _save_data()
+            return {"ok": True, "comments": f["comments"]}
+    return JSONResponse(status_code=404, content={"error": "动态不存在"})
+
+
 # =====================================================================
 # 社区：发帖 / 删除帖子
 # =====================================================================
