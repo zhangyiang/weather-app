@@ -363,7 +363,7 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .pf-avatar{width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 8px;border:3px solid rgba(255,255,255,0.3)}
 .pf-name{font-size:18px;font-weight:700}
 .pf-id{font-size:12px;opacity:0.7;margin-top:2px}
-.pf-stats{display:flex;justify-content:center;gap:20px;margin-top:16px}
+.pf-stats{display:flex;justify-content:center;gap:48px;margin-top:16px}
 .pf-stat{text-align:center}
 .pf-stat-num{font-size:20px;font-weight:700}
 .pf-stat-label{font-size:11px;opacity:0.8;margin-top:2px}
@@ -505,7 +505,7 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .up-avatar img{width:100%;height:100%;object-fit:cover}
 .up-name{font-size:18px;font-weight:700}
 .up-id{font-size:12px;opacity:0.75;margin-top:2px}
-.up-stats{display:flex;justify-content:center;gap:22px;margin-top:14px}
+.up-stats{display:flex;justify-content:center;gap:48px;margin-top:14px}
 .up-stat{text-align:center;cursor:pointer}
 .up-stat-num{font-size:18px;font-weight:700}
 .up-stat-label{font-size:11px;opacity:0.8;margin-top:2px}
@@ -772,7 +772,6 @@ html.app-mode .pwa-install-banner{display:none !important} /* APP/PWA 模式下�
     <div class="up-name" id="upName">用户</div>
     <div class="up-id" id="upId"></div>
     <div class="up-stats">
-      <div class="up-stat"><div class="up-stat-num" id="upStatPhotos">0</div><div class="up-stat-label">实拍</div></div>
       <div class="up-stat" onclick="openUserFollowList('followers')"><div class="up-stat-num" id="upStatFollowers">0</div><div class="up-stat-label">粉丝</div></div>
       <div class="up-stat" onclick="openUserFollowList('following')"><div class="up-stat-num" id="upStatFollowing">0</div><div class="up-stat-label">关注</div></div>
     </div>
@@ -841,8 +840,6 @@ html.app-mode .pwa-install-banner{display:none !important} /* APP/PWA 模式下�
     <div class="pf-name" id="pfName">微信用户</div>
     <div class="pf-id" id="pfId">未登录</div>
     <div class="pf-stats">
-      <div class="pf-stat"><div class="pf-stat-num" id="pfStatPhotos">0</div><div class="pf-stat-label">实拍</div></div>
-      <div class="pf-stat"><div class="pf-stat-num" id="pfStatLikes">0</div><div class="pf-stat-label">获赞</div></div>
       <div class="pf-stat" onclick="openFollowList('followers')" style="cursor:pointer"><div class="pf-stat-num" id="pfStatFollowers">0</div><div class="pf-stat-label">粉丝</div></div>
       <div class="pf-stat" onclick="openFollowList('following')" style="cursor:pointer"><div class="pf-stat-num" id="pfStatFollowing">0</div><div class="pf-stat-label">关注</div></div>
     </div>
@@ -2402,8 +2399,6 @@ function renderProfile(){
     document.getElementById('pfId').onclick=showLoginModal;
     if(lr)lr.style.display='none';
   }
-  document.getElementById('pfStatPhotos').textContent=S.photos;
-  document.getElementById('pfStatLikes').textContent=S.likes;
   document.getElementById('pfStatFollowers').textContent=ensureFollowers().length;
   document.getElementById('pfStatFollowing').textContent=getFollowing().length;
 }
@@ -2614,7 +2609,6 @@ function renderUserProfile(){
     var owner=f.owner||f.user||'';
     return owner===username;
   }).sort(function(a,b){return b.id-a.id});
-  document.getElementById('upStatPhotos').textContent=userFeeds.length;
   // 粉丝/关注数：本地用 isFollowing 估算（被关注者视角下，本地无此数据，给 0）
   document.getElementById('upStatFollowers').textContent=0;
   document.getElementById('upStatFollowing').textContent=0;
