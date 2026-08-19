@@ -302,9 +302,12 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .fd-c-name{font-size:12px;font-weight:600}
 .fd-c-text{font-size:13px;line-height:1.5;margin-top:2px}
 .fd-c-time{font-size:10px;color:var(--muted);margin-top:2px}
-.fd-comment-input{flex-shrink:0;background:var(--card);border-top:1px solid var(--border);padding:10px 16px;display:flex;gap:8px;margin-top:16px}
-.fd-input{flex:1;border:1px solid var(--border);border-radius:var(--r-full);padding:8px 16px;font-size:13px;outline:none;font-family:var(--font)}
-.fd-send-btn{background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:var(--r-full);font-size:13px;font-weight:600;cursor:pointer}
+.fd-comment-input{flex-shrink:0;padding:12px 0 8px;margin-top:12px}
+.fd-input-wrap{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:var(--r-full);padding:4px 4px 4px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.06),0 0 0 1px var(--border) inset}
+.fd-input{flex:1;border:none;background:transparent;padding:10px 0;font-size:14px;outline:none;font-family:var(--font);color:var(--text)}
+.fd-input::placeholder{color:var(--muted)}
+.fd-send-btn{background:linear-gradient(135deg,var(--accent),#5b8dee);color:#fff;border:none;width:38px;height:38px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform .15s ease}
+.fd-send-btn:active{transform:scale(0.92)}
 
 /* Location Picker */
 .lp-search{padding:12px 16px}
@@ -1933,8 +1936,8 @@ function openFeed(id){
     '<div class="fd-caption">'+(f.caption?escHtml(f.caption):'')+'</div>'+
     '<div class="fd-weather-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/></svg>'+escHtml(f.weather)+'</div>'+
     '<div class="fd-actions"><div class="fd-action '+likeCls+'" id="fdLike" onclick="toggleLike('+f.id+',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+likeIcon+'</svg><span>'+f.likes+'</span></div><div class="fd-action" onclick="showCommentModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>'+f.comments+'</span></div></div>'+
-    '<div class="fd-comments-title">全部评论 ('+f.comments+')</div><div id="fdComments">'+ch+'</div>'+
-    '<div class="fd-comment-input"><input class="fd-input" placeholder="写评论..." id="fdInput" onkeypress="if(event.key===\'Enter\')submitFdComment()"><button class="fd-send-btn" onclick="submitFdComment()">发送</button></div>';
+    '<div class="fd-comment-input"><div class="fd-input-wrap"><input class="fd-input" placeholder="说点什么…" id="fdInput" onkeypress="if(event.key===\'Enter\')submitFdComment()"><button class="fd-send-btn" onclick="submitFdComment()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button></div></div>'+
+    '<div class="fd-comments-title">全部评论 ('+f.comments+')</div><div id="fdComments">'+ch+'</div>';
   showScreen('screen-feed-detail',true);
 }
 // 详情页多图缩略图切换主图
