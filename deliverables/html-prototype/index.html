@@ -65,6 +65,8 @@ html.app-mode body{background:var(--bg);align-items:stretch;justify-content:stre
 html.app-mode .device{width:100vw;width:100%;height:100vh;height:100svh;height:100dvh;max-height:100svh;border-radius:0;box-shadow:none;transform:none !important;left:0;top:0;margin:0;padding:0}
 /* 安全区适配（刘海屏/底部手势条） */
 html.app-mode .screen{bottom:calc(var(--tab-h) + env(safe-area-inset-bottom));padding-top:env(safe-area-inset-top);padding-bottom:20px}
+/* 相机屏幕在 APP 模式下撑满整个屏幕 */
+html.app-mode .cam-screen{bottom:0 !important;padding-bottom:0 !important;padding-top:0 !important}
 html.app-mode .status-bar{padding-top:env(safe-area-inset-top)}
 /* 在 APP 模式下隐藏自定义状态栏，让手机系统状态栏显示 */
 html.app-mode .status-bar{display:none}
@@ -424,13 +426,13 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .cm-modal-submit{background:var(--accent);color:#fff}
 
 /* Camera */
-.cam-screen{background:#000}
+.cam-screen{background:#000;bottom:0 !important;padding-bottom:0 !important;overflow:hidden}
 /* 拍照界面下隐藏底部 tab bar，让拍照按钮完整显示 */
 .cam-screen.active ~ .tab-bar{display:none}
-.cam-view{flex:1;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);font-size:14px;position:relative}
+.cam-view{flex:1;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);font-size:14px;position:relative;min-height:0}
 .cam-overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:240px;height:240px;border:2px solid rgba(255,255,255,0.4);border-radius:var(--r-lg)}
 .cam-hint{position:absolute;bottom:30px;left:0;right:0;text-align:center;font-size:13px;color:rgba(255,255,255,0.6)}
-.cam-btn-bar{padding:20px 40px calc(40px + env(safe-area-inset-bottom));display:flex;justify-content:space-around;align-items:center;position:relative;z-index:2}
+.cam-btn-bar{padding:20px 40px calc(30px + env(safe-area-inset-bottom));display:flex;justify-content:space-around;align-items:center;position:relative;z-index:2;flex-shrink:0}
 .cam-close{width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;cursor:pointer}
 .cam-close svg{width:20px;height:20px;color:#fff}
 .cam-capture{width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,0.3);cursor:pointer}
@@ -444,13 +446,17 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;z-index:0}
 .cam-overlay{z-index:1}
 .cam-hint{z-index:1}
-/* 横屏提示：仅当拍照界面激活且设备处于横屏时显示，引导用户竖屏拍摄 */
-.cam-landscape-notice{display:none;position:absolute;inset:0;background:rgba(0,0,0,0.92);color:#fff;z-index:30;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:16px;font-weight:600;gap:10px;padding:24px}
-.cam-landscape-notice svg{width:56px;height:56px;opacity:0.9;animation:camRotateHint 2.2s ease-in-out infinite}
-@keyframes camRotateHint{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-90deg)}}
-@media (orientation: landscape){
-  #screen-camera.active .cam-landscape-notice{display:flex}
-}
+/* 横屏支持：视频容器适配横屏（不旋转视频，浏览器自动处理） */
+.cam-video-wrap{position:absolute;inset:0;width:100%;height:100%;z-index:0;overflow:hidden}
+/* 横屏时调整取景框为横向 */
+.cam-screen.landscape .cam-overlay{width:280px;height:180px}
+/* 横屏时按钮栏调整 */
+.cam-screen.landscape .cam-btn-bar{padding:14px 32px calc(20px + env(safe-area-inset-bottom))}
+.cam-screen.landscape .cam-capture{width:56px;height:56px}
+.cam-screen.landscape .cam-close,.cam-screen.landscape .cam-switch{width:40px;height:40px}
+/* 横屏时相册按钮位置调整 */
+.cam-screen.landscape .cam-album{top:calc(env(safe-area-inset-top) + 6px);left:10px;width:36px;height:36px}
+.cam-screen.landscape .cam-hint{bottom:16px;font-size:12px}
 
 /* Toast */
 .toast{position:absolute;bottom:120px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#fff;padding:10px 20px;border-radius:var(--r-full);font-size:13px;z-index:300;opacity:0;transition:opacity 0.3s;pointer-events:none}
@@ -472,7 +478,9 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .mp-hero{padding-top:calc(var(--sb-h) + 8px)}
 .ad-hero{padding-top:calc(var(--sb-h) + 8px)}
 .pf-header{padding-top:calc(var(--sb-h) + 12px)}
-#screen-camera .cam-view{padding-top:var(--sb-h)}
+#screen-camera .cam-view{padding-top:env(safe-area-inset-top)}
+/* 横屏时相机视图调整 */
+html.app-mode #screen-camera.landscape .cam-view{padding-top:0}
 
 /* ===== Camera Preview (待发表照片预览) ===== */
 .cam-preview{position:absolute;inset:0;background:#000;z-index:40;display:none;flex-direction:column}
@@ -952,13 +960,10 @@ html.app-mode .pwa-install-banner{display:none !important} /* APP/PWA 模式下�
 
 <!-- ===== Camera Screen ===== -->
 <div class="screen cam-screen" id="screen-camera">
-    <div class="cam-landscape-notice">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
-      <div>请保持竖屏拍摄</div>
-      <div style="font-size:13px;opacity:0.7">将手机竖直放置以获得最佳效果</div>
-    </div>
     <div class="cam-view">
-      <video id="camVideo" class="cam-video" autoplay playsinline muted></video>
+      <div class="cam-video-wrap" id="camVideoWrap">
+        <video id="camVideo" class="cam-video" autoplay playsinline muted></video>
+      </div>
       <div class="cam-overlay"></div>
       <div class="cam-hint" id="camHint">将天空放入框内拍摄</div>
       <!-- 相册入口：左上角浮动按钮，支持多选 -->
@@ -3156,6 +3161,20 @@ function logout(){
 // ===== Camera（真实摄像头）=====
 var camStream=null;
 var camFacing='environment';
+var _camOrientationHandler=null;
+
+// 更新相机预览方向（根据当前屏幕方向切换 UI 布局）
+function _updateCameraOrientation(){
+  var screen=document.getElementById('screen-camera');
+  if(!screen)return;
+  var w=window.innerWidth, h=window.innerHeight;
+  var isLandscape=w>h;
+  if(isLandscape){
+    screen.classList.add('landscape');
+  }else{
+    screen.classList.remove('landscape');
+  }
+}
 
 function startCamera(){
   var v=document.getElementById('camVideo');
@@ -3169,6 +3188,14 @@ function startCamera(){
       camStream=stream;
       if(v){v.srcObject=stream;v.style.display='block';v.play();}
       if(hint)hint.textContent='将天空放入框内拍摄';
+      // 初始方向适配
+      _updateCameraOrientation();
+      // 绑定方向变化监听
+      if(!_camOrientationHandler){
+        _camOrientationHandler=function(){ setTimeout(_updateCameraOrientation,100); };
+        window.addEventListener('orientationchange',_camOrientationHandler);
+        window.addEventListener('resize',_camOrientationHandler);
+      }
     })
     .catch(function(err){
       console.warn('Camera error',err);
@@ -3180,6 +3207,15 @@ function stopCamera(){
   if(camStream){camStream.getTracks().forEach(function(t){t.stop()});camStream=null;}
   var v=document.getElementById('camVideo');
   if(v){v.srcObject=null;v.style.display='none';}
+  // 清理方向监听
+  if(_camOrientationHandler){
+    window.removeEventListener('orientationchange',_camOrientationHandler);
+    window.removeEventListener('resize',_camOrientationHandler);
+    _camOrientationHandler=null;
+  }
+  // 重置方向样式
+  var screen=document.getElementById('screen-camera');
+  if(screen)screen.classList.remove('landscape');
 }
 function switchCamera(){
   camFacing=camFacing==='environment'?'user':'environment';
@@ -3194,6 +3230,8 @@ function goToCamera(){
   S.pendingPhotos=[];
   hidePreview();
   showScreen('screen-camera',true);
+  // 强制修正屏幕底部，确保相机界面撑满
+  _fixScreenBottom();
   startCamera();
 }
 function closeCamera(){
@@ -3203,6 +3241,8 @@ function closeCamera(){
   S.pendingPhotos=[];
   hidePreview();
   goBack();
+  // 恢复其他屏幕的底部布局
+  _fixScreenBottom();
 }
 // 把一张照片 dataURL 压缩到合理尺寸（最大边 1024，jpeg 0.6），避免 dataURL 过大导致 TiDB 存储失败
 function compressPhotoAsync(dataUrl,cb){
@@ -3719,6 +3759,12 @@ function _fixScreenBottom(){
   }
   // 给每个 screen 写死内联 bottom，优先级最高
   screens.forEach(function(sc){
+    // 相机屏幕始终撑满底部，不被 tab-bar 占用
+    if(sc.classList.contains('cam-screen')){
+      sc.style.setProperty('bottom', '0px', 'important');
+      sc.style.setProperty('padding-bottom', '0px', 'important');
+      return;
+    }
     if(isApp){
       // app-mode：tab-h + 安全区（通过计算 tabBar 高度已包含 safe-area）
       sc.style.setProperty('bottom', tabH + 'px', 'important');
@@ -3734,10 +3780,16 @@ _fixScreenBottom();
 window.addEventListener('resize', function(){ setTimeout(_fixScreenBottom, 30); });
 window.addEventListener('orientationchange', function(){ setTimeout(_fixScreenBottom, 200); setTimeout(_fixScreenBottom, 600); });
 
-// ===== 锁定竖屏方向（仅手机/APP模式尝试锁定；桌面端不干扰）=====
+// ===== 锁定竖屏方向（仅手机/APP模式尝试锁定；相机界面不锁定横屏）=====
 function _lockOrientation(){
   var w=window.innerWidth, h=window.innerHeight;
   var lock=document.getElementById('orientationLock');
+  var cameraActive=document.getElementById('screen-camera')&&document.getElementById('screen-camera').classList.contains('active');
+  // 相机界面激活时不锁定方向，允许横屏拍照
+  if(cameraActive){
+    if(lock){ lock.style.removeProperty('display'); }
+    return;
+  }
   // 仅在手机屏（≤900px）且处于横屏时才显示遮罩
   if(lock && w <= 900 && w > h){
     lock.style.setProperty('display','flex','important');
@@ -3760,9 +3812,22 @@ function _lockOrientation(){
   }
 }
 _lockOrientation();
-// 监听旋转事件 + resize，双重锁定
-window.addEventListener('orientationchange', function(){ setTimeout(_lockOrientation, 100); setTimeout(_lockOrientation, 500); });
-window.addEventListener('resize', function(){ setTimeout(_lockOrientation, 50); });
+// 监听旋转事件 + resize，双重锁定 + 相机方向更新
+window.addEventListener('orientationchange', function(){ 
+  setTimeout(_lockOrientation, 100); 
+  setTimeout(_lockOrientation, 500);
+  // 相机界面激活时同步方向
+  if(document.getElementById('screen-camera')&&document.getElementById('screen-camera').classList.contains('active')){
+    setTimeout(_updateCameraOrientation, 150);
+    setTimeout(_updateCameraOrientation, 550);
+  }
+});
+window.addEventListener('resize', function(){ 
+  setTimeout(_lockOrientation, 50);
+  if(document.getElementById('screen-camera')&&document.getElementById('screen-camera').classList.contains('active')){
+    setTimeout(_updateCameraOrientation, 60);
+  }
+});
 
 // ===== 首次用户交互后尝试进入全屏（隐藏浏览器地址栏上下条，更像原生 App）=====
 function _tryEnterFullscreen(){
