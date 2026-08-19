@@ -46,6 +46,18 @@ body{font-family:var(--font);background:#1a1a2e;display:flex;align-items:center;
 .screen.active{display:flex}
 .screen::-webkit-scrollbar{display:none}
 
+/* ===== 下拉刷新 ===== */
+.ptr-indicator{position:absolute;top:var(--sb-h);left:0;right:0;height:0;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:13px;opacity:0;transition:opacity .2s ease,height .2s ease;z-index:10;pointer-events:none;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,0.95) 0%,rgba(255,255,255,0.6) 100%);border-bottom:1px solid var(--border);backdrop-filter:blur(8px)}
+.ptr-indicator .ptr-icon{width:24px;height:24px;margin-right:8px;flex-shrink:0}
+.ptr-indicator .ptr-icon svg{width:24px;height:24px;transition:transform .25s ease}
+.ptr-indicator.refreshing{height:50px;opacity:1;transition:height .2s ease}
+.ptr-indicator.refreshing .ptr-icon svg{animation:ptrSpin 0.8s linear infinite}
+.ptr-indicator.pulling .ptr-icon svg{transform:rotate(180deg)}
+@keyframes ptrSpin{to{transform:rotate(360deg)}}
+
+/* 下拉刷新指示器：app-mode 下 status bar 隐藏，indicator 从顶部开始 */
+html.app-mode .ptr-indicator{top:0}
+
 /* ===== 移动端全屏适配：作为 PWA / 安装包 / 小屏移动端浏览器运行时，让设备框填满整个屏幕，去除手机外壳阴影 ===== */
 /* app-mode 触发条件：manifest standalone / iOS standalone / ?app=1 / WebView / 视口宽度≤500px */
 html.app-mode{height:100%;width:100%;margin:0;padding:0}
@@ -108,11 +120,6 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .location-left svg{width:16px;height:16px}
 .location-name{font-size:17px;font-weight:600}
 .location-chevron{width:14px;height:14px;opacity:0.7}
-.refresh-btn{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.35);border:1.5px solid rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;backdrop-filter:blur(8px);flex-shrink:0;transition:background 0.2s,transform 0.15s;box-shadow:0 2px 8px rgba(0,0,0,0.15)}
-.refresh-btn:active{background:rgba(255,255,255,0.5);transform:scale(0.92)}
-.refresh-btn svg{width:18px;height:18px}
-.refresh-btn.spinning svg{animation:refreshSpin 0.8s linear infinite}
-@keyframes refreshSpin{to{transform:rotate(360deg)}}
 .bell-btn{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;border:none;color:#fff}
 .bell-btn svg{width:20px;height:20px}
 .bell-badge{position:absolute;top:6px;right:6px;width:8px;height:8px;background:var(--danger);border-radius:50%;border:1.5px solid #fff}
@@ -618,9 +625,6 @@ html.app-mode .pwa-install-banner{display:none !important} /* APP/PWA 模式下�
         <svg class="location-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
       </div>
       <!-- 首页通知铃已按需求移除 -->
-      <div class="refresh-btn" id="homeRefreshBtn" onclick="refreshWeather(this)" title="刷新天气">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-      </div>
     </div>
     <div class="source-selector" id="sourceSelector"></div>
     <div class="weather-showcase">
@@ -1502,21 +1506,179 @@ function selectSource(id){
   });
 }
 
-// ===== Refresh =====
-function refreshWeather(btn){
-  if(!btn)btn=document.getElementById('homeRefreshBtn');
-  if(btn){
-    if(btn.classList.contains('spinning'))return;
-    btn.classList.add('spinning');
+// ===== 下拉刷新 =====
+// 全局 PTR 指示器（放在 .device 容器内，所有页面共用）
+var _ptrIndicator = null;
+var _ptrConfig = {};  // { screenId, refreshFn }
+
+function _ensurePtrIndicator(){
+  if(_ptrIndicator)return _ptrIndicator;
+  var device = document.querySelector('.device');
+  if(!device)return null;
+  _ptrIndicator = document.createElement('div');
+  _ptrIndicator.className = 'ptr-indicator';
+  _ptrIndicator.innerHTML = '<div class="ptr-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></div><span class="ptr-text">下拉刷新</span>';
+  // 放在 status-bar 后面，屏幕前面
+  var statusBar = document.getElementById('statusBar');
+  if(statusBar && statusBar.nextSibling){
+    device.insertBefore(_ptrIndicator, statusBar.nextSibling);
+  }else{
+    device.appendChild(_ptrIndicator);
   }
-  renderHome();
-  // renderHome 内部异步请求后端，此处用计时器在合理时间后停止旋转动画并提示
-  setTimeout(function(){
-    if(btn)btn.classList.remove('spinning');
-    showToast('天气数据已刷新');
-  },1200);
+  return _ptrIndicator;
 }
-function refreshData(){refreshWeather();}
+
+function initPullToRefresh(screenId, refreshFn){
+  var screen = document.getElementById(screenId);
+  if(!screen)return;
+  
+  var startY = 0;
+  var pulling = false;
+  var pullingDist = 0;
+  var refreshing = false;
+  var PULL_THRESHOLD = 60;
+  
+  function getTouchY(e){
+    if(e.touches && e.touches.length)return e.touches[0].clientY;
+    if(e.changedTouches && e.changedTouches.length)return e.changedTouches[0].clientY;
+    return null;
+  }
+  
+  function isActiveScreen(){
+    var active = document.querySelector('.screen.active');
+    return active && active.id === screenId;
+  }
+  
+  function setIndicatorProgress(damped){
+    var pi = _ensurePtrIndicator();
+    if(!pi)return;
+    var textEl = pi.querySelector('.ptr-text');
+    var height = Math.min(damped, 80);
+    pi.style.height = height + 'px';
+    pi.style.opacity = Math.min(damped / PULL_THRESHOLD, 1);
+    if(damped >= PULL_THRESHOLD){
+      if(textEl)textEl.textContent = '释放刷新';
+      pi.classList.add('pulling');
+    }else{
+      if(textEl)textEl.textContent = '下拉刷新';
+      pi.classList.remove('pulling');
+    }
+  }
+  
+  function onTouchStart(e){
+    if(refreshing)return;
+    if(!isActiveScreen())return;
+    if(screen.scrollTop > 0)return;
+    var y = getTouchY(e);
+    if(y === null)return;
+    startY = y;
+    pulling = true;
+    pullingDist = 0;
+  }
+  
+  function onTouchMove(e){
+    if(!pulling || refreshing)return;
+    if(!isActiveScreen())return;
+    var y = getTouchY(e);
+    if(y === null)return;
+    pullingDist = y - startY;
+    if(pullingDist <= 0){
+      pulling = false;
+      var pi = _ensurePtrIndicator();
+      if(pi){pi.style.height='0px';pi.style.opacity='0';}
+      return;
+    }
+    e.preventDefault();
+    var damped = pullingDist * 0.4;
+    setIndicatorProgress(damped);
+  }
+  
+  function onTouchEnd(){
+    if(!pulling || refreshing)return;
+    pulling = false;
+    var damped = pullingDist * 0.4;
+    if(damped >= PULL_THRESHOLD){
+      triggerRefresh();
+    }else{
+      var pi = _ensurePtrIndicator();
+      if(pi){pi.style.height='0px';pi.style.opacity='0';}
+    }
+    pullingDist = 0;
+  }
+  
+  function triggerRefresh(){
+    refreshing = true;
+    var pi = _ensurePtrIndicator();
+    if(pi){
+      pi.classList.add('refreshing');
+      pi.classList.remove('pulling');
+      pi.style.height = '50px';
+      pi.style.opacity = '1';
+      var textEl = pi.querySelector('.ptr-text');
+      if(textEl)textEl.textContent = '正在刷新…';
+    }
+    _ptrConfig = { screenId: screenId, refreshFn: refreshFn };
+    try{
+      refreshFn(function(){
+        finishRefresh();
+      });
+    }catch(e){
+      finishRefresh();
+    }
+  }
+  
+  function finishRefresh(){
+    refreshing = false;
+    var pi = _ensurePtrIndicator();
+    if(pi){
+      pi.classList.remove('refreshing');
+      pi.style.height = '0px';
+      pi.style.opacity = '0';
+      setTimeout(function(){
+        var textEl = pi.querySelector('.ptr-text');
+        if(textEl)textEl.textContent = '下拉刷新';
+      }, 400);
+    }
+  }
+  
+  // 触摸事件（移动端）- 都用 passive:false 以便 preventDefault
+  screen.addEventListener('touchstart', onTouchStart, {passive:false});
+  screen.addEventListener('touchmove', onTouchMove, {passive:false});
+  screen.addEventListener('touchend', onTouchEnd);
+  
+  // 鼠标拖拽（桌面端模拟）
+  var mouseDown = false;
+  screen.addEventListener('mousedown', function(e){
+    if(refreshing)return;
+    if(!isActiveScreen())return;
+    if(screen.scrollTop > 0)return;
+    startY = e.clientY;
+    mouseDown = true;
+    pulling = true;
+    pullingDist = 0;
+  });
+  document.addEventListener('mousemove', function(e){
+    if(!mouseDown || !pulling || refreshing)return;
+    if(!isActiveScreen())return;
+    var y = e.clientY;
+    pullingDist = y - startY;
+    if(pullingDist <= 0){
+      pulling = false;
+      var pi = _ensurePtrIndicator();
+      if(pi){pi.style.height='0px';pi.style.opacity='0';}
+      return;
+    }
+    var damped = pullingDist * 0.4;
+    setIndicatorProgress(damped);
+  });
+  document.addEventListener('mouseup', function(){
+    if(!mouseDown)return;
+    mouseDown = false;
+    onTouchEnd();
+  });
+}
+
+// （旧的独立刷新函数已移除，统一用 pull-to-refresh）
 
 // ===== Leaderboard =====
 // 引擎底座排行榜：用 ENGINE_SOURCES 渲染 + 后端 accuracy 数据
@@ -3449,6 +3611,23 @@ if('serviceWorker' in navigator){
     });
   });
 }
+
+// 初始化下拉刷新（前三个页面）
+initPullToRefresh('screen-home', function(done){
+  renderHome();
+  showToast('天气数据已更新');
+  setTimeout(done, 800);
+});
+initPullToRefresh('screen-leaderboard', function(done){
+  renderLeaderboard();
+  showToast('排行榜已更新');
+  setTimeout(done, 600);
+});
+initPullToRefresh('screen-community', function(done){
+  renderCommunity();
+  showToast('社区已更新');
+  setTimeout(done, 600);
+});
 
 try{
   initData();
