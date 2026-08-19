@@ -317,27 +317,28 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .fd-send-btn:active{transform:scale(0.92)}
 
 /* Location Picker */
-.lp-search{padding:12px 16px}
-.lp-search-input{width:100%;padding:10px 16px;border:1px solid var(--border);border-radius:var(--r-full);font-size:14px;outline:none;font-family:var(--font);background:var(--card)}
-.lp-current{padding:8px 16px 4px}
-.lp-current-label{font-size:12px;color:var(--text-secondary);margin-bottom:10px;font-weight:500}
-.lp-current-item{display:flex;align-items:center;gap:8px;padding:14px;background:var(--card);border-radius:var(--r-md);cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
-.lp-current-item svg{width:16px;height:16px;color:var(--accent)}
+.lp-search{padding:16px 16px 12px;flex-shrink:0}
+.lp-search-input{width:100%;padding:11px 18px;border:1px solid var(--border);border-radius:var(--r-full);font-size:15px;outline:none;font-family:var(--font);background:var(--card);box-sizing:var(--bg)}
+.lp-search-input:focus{border-color:var(--accent);background:#fff}
+.lp-current{padding:0 16px 16px;flex-shrink:0}
+.lp-current-label{font-size:13px;color:var(--text-secondary);margin-bottom:8px;font-weight:500}
+.lp-current-item{display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--card);border-radius:var(--r-md);cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.lp-current-item svg{width:18px;height:18px;color:var(--accent);flex-shrink:0}
 .lp-current-name{font-size:15px;font-weight:600}
-.lp-hot{padding:4px 16px 20px}
-.lp-hot-label{font-size:12px;color:var(--text-secondary);margin-bottom:12px;font-weight:500}
-.lp-hot-grid{display:flex;flex-wrap:wrap;gap:10px 12px}
-.lp-hot-item{padding:9px 18px;background:var(--card);border-radius:var(--r-full);font-size:14px;font-weight:500;cursor:pointer;border:1px solid var(--border);white-space:nowrap;min-width:64px;text-align:center}
+.lp-hot{padding:0 16px 16px;flex-shrink:0}
+.lp-hot-label{font-size:13px;color:var(--text-secondary);margin-bottom:10px;font-weight:500}
+.lp-hot-grid{display:flex;flex-wrap:wrap;gap:10px}
+.lp-hot-item{padding:10px 20px;background:var(--card);border-radius:var(--r-full);font-size:14px;font-weight:500;cursor:pointer;border:1px solid var(--border);white-space:nowrap;min-width:72px;text-align:center}
 .lp-hot-item:hover{border-color:var(--accent);color:var(--accent)}
-.lp-city-list{padding:8px 16px 120px;border-top:1px solid var(--border)}
+.lp-city-list{padding:4px 16px 120px;border-top:8px solid var(--bg)}
 .lp-city{border-bottom:1px solid var(--border)}
-.lp-city-header{display:flex;align-items:center;justify-content:space-between;padding:12px 0;cursor:pointer}
+.lp-city-header{display:flex;align-items:center;justify-content:space-between;padding:14px 0;cursor:pointer}
 .lp-city-name{font-size:15px;font-weight:600}
 .lp-city-arrow{width:16px;height:16px;transition:transform 0.2s}
 .lp-city.open .lp-city-arrow{transform:rotate(180deg)}
-.lp-districts{display:none;flex-wrap:wrap;gap:6px;padding:0 0 12px}
+.lp-districts{display:none;flex-wrap:wrap;gap:8px;padding:0 0 14px}
 .lp-city.open .lp-districts{display:flex}
-.lp-district{padding:6px 14px;background:var(--bg);border-radius:var(--r-full);font-size:12px;cursor:pointer;border:1px solid var(--border)}
+.lp-district{padding:7px 16px;background:var(--bg);border-radius:var(--r-full);font-size:13px;cursor:pointer;border:1px solid var(--border)}
 .lp-district:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
 .lp-district.selected{background:var(--accent);color:#fff;border-color:var(--accent)}
 
@@ -451,6 +452,7 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .loading-retry-btn{background:var(--accent);color:#fff;border:none;border-radius:var(--r-md);padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer}
 /* Status bar padding */
 #screen-leaderboard,#screen-source-detail,#screen-community,#screen-feed-detail,#screen-location,#screen-notifications{padding-top:var(--sb-h)}
+#screen-location .sd-header{padding:14px 16px 10px}
 .home-hero{padding-top:calc(var(--sb-h) + 4px)}
 .mp-hero{padding-top:calc(var(--sb-h) + 8px)}
 .ad-hero{padding-top:calc(var(--sb-h) + 8px)}
