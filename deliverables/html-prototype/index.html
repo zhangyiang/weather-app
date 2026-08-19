@@ -47,11 +47,11 @@ body{font-family:var(--font);background:#1a1a2e;display:flex;align-items:center;
 .screen::-webkit-scrollbar{display:none}
 
 /* ===== 下拉刷新 ===== */
-.ptr-indicator{position:absolute;top:var(--sb-h);left:0;right:0;height:0;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:13px;opacity:0;transition:opacity .2s ease,height .2s ease;z-index:10;pointer-events:none;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,0.95) 0%,rgba(255,255,255,0.6) 100%);border-bottom:1px solid var(--border);backdrop-filter:blur(8px)}
-.ptr-indicator .ptr-icon{width:24px;height:24px;margin-right:8px;flex-shrink:0}
-.ptr-indicator .ptr-icon svg{width:24px;height:24px;transition:transform .25s ease}
-.ptr-indicator.refreshing{height:50px;opacity:1;transition:height .2s ease}
-.ptr-indicator.refreshing .ptr-icon svg{animation:ptrSpin 0.8s linear infinite}
+.ptr-indicator{position:absolute;top:var(--sb-h);left:0;right:0;height:0;display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:13px;font-weight:500;opacity:0;transition:opacity .15s ease,height .15s ease;z-index:3;pointer-events:none;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,0.92) 0%,rgba(219,234,254,0.75) 100%)}
+.ptr-indicator .ptr-icon{width:26px;height:26px;margin-right:10px;flex-shrink:0}
+.ptr-indicator .ptr-icon svg{width:26px;height:26px;transition:transform .25s ease}
+.ptr-indicator.refreshing{height:55px;opacity:1;transition:height .25s cubic-bezier(0.22, 1, 0.36, 1),opacity .2s ease}
+.ptr-indicator.refreshing .ptr-icon svg{animation:ptrSpin 0.7s linear infinite}
 .ptr-indicator.pulling .ptr-icon svg{transform:rotate(180deg)}
 @keyframes ptrSpin{to{transform:rotate(360deg)}}
 
@@ -1507,9 +1507,8 @@ function selectSource(id){
 }
 
 // ===== 下拉刷新 =====
-// 全局 PTR 指示器（放在 .device 容器内，所有页面共用）
+// 指示器放在 .device 内，作为固定覆盖层
 var _ptrIndicator = null;
-var _ptrConfig = {};  // { screenId, refreshFn }
 
 function _ensurePtrIndicator(){
   if(_ptrIndicator)return _ptrIndicator;
@@ -1518,13 +1517,7 @@ function _ensurePtrIndicator(){
   _ptrIndicator = document.createElement('div');
   _ptrIndicator.className = 'ptr-indicator';
   _ptrIndicator.innerHTML = '<div class="ptr-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></div><span class="ptr-text">下拉刷新</span>';
-  // 放在 status-bar 后面，屏幕前面
-  var statusBar = document.getElementById('statusBar');
-  if(statusBar && statusBar.nextSibling){
-    device.insertBefore(_ptrIndicator, statusBar.nextSibling);
-  }else{
-    device.appendChild(_ptrIndicator);
-  }
+  device.appendChild(_ptrIndicator);
   return _ptrIndicator;
 }
 
@@ -1536,7 +1529,8 @@ function initPullToRefresh(screenId, refreshFn){
   var pulling = false;
   var pullingDist = 0;
   var refreshing = false;
-  var PULL_THRESHOLD = 60;
+  var PULL_THRESHOLD = 65;
+  var MAX_PULL = 140;
   
   function getTouchY(e){
     if(e.touches && e.touches.length)return e.touches[0].clientY;
@@ -1549,13 +1543,35 @@ function initPullToRefresh(screenId, refreshFn){
     return active && active.id === screenId;
   }
   
-  function setIndicatorProgress(damped){
+  function setScreenTranslate(damped){
+    // 让整个屏幕跟着手指下移
+    if(damped > 0){
+      screen.style.transition = 'none';
+      screen.style.transform = 'translateY(' + damped + 'px)';
+      screen.style.zIndex = '2';
+    }
+  }
+  
+  function resetScreenTranslate(animated){
+    if(animated){
+      screen.style.transition = 'transform .3s cubic-bezier(0.22, 1, 0.36, 1)';
+    }else{
+      screen.style.transition = 'none';
+    }
+    screen.style.transform = '';
+    screen.style.zIndex = '';
+    setTimeout(function(){
+      screen.style.transition = '';
+    }, 350);
+  }
+  
+  function setIndicator(damped){
     var pi = _ensurePtrIndicator();
     if(!pi)return;
     var textEl = pi.querySelector('.ptr-text');
-    var height = Math.min(damped, 80);
+    var height = Math.min(damped, MAX_PULL);
     pi.style.height = height + 'px';
-    pi.style.opacity = Math.min(damped / PULL_THRESHOLD, 1);
+    pi.style.opacity = Math.min(damped / 40, 1);
     if(damped >= PULL_THRESHOLD){
       if(textEl)textEl.textContent = '释放刷新';
       pi.classList.add('pulling');
@@ -1584,40 +1600,46 @@ function initPullToRefresh(screenId, refreshFn){
     pullingDist = y - startY;
     if(pullingDist <= 0){
       pulling = false;
+      resetScreenTranslate(true);
       var pi = _ensurePtrIndicator();
       if(pi){pi.style.height='0px';pi.style.opacity='0';}
       return;
     }
     e.preventDefault();
-    var damped = pullingDist * 0.4;
-    setIndicatorProgress(damped);
+    var damped = Math.min(pullingDist * 0.5, MAX_PULL);
+    setScreenTranslate(damped);
+    setIndicator(damped);
   }
   
   function onTouchEnd(){
     if(!pulling || refreshing)return;
     pulling = false;
-    var damped = pullingDist * 0.4;
+    var damped = Math.min(pullingDist * 0.5, MAX_PULL);
     if(damped >= PULL_THRESHOLD){
-      triggerRefresh();
+      triggerRefresh(damped);
     }else{
+      resetScreenTranslate(true);
       var pi = _ensurePtrIndicator();
       if(pi){pi.style.height='0px';pi.style.opacity='0';}
     }
     pullingDist = 0;
   }
   
-  function triggerRefresh(){
+  function triggerRefresh(damped){
     refreshing = true;
     var pi = _ensurePtrIndicator();
     if(pi){
       pi.classList.add('refreshing');
       pi.classList.remove('pulling');
-      pi.style.height = '50px';
+      pi.style.height = '55px';
       pi.style.opacity = '1';
       var textEl = pi.querySelector('.ptr-text');
       if(textEl)textEl.textContent = '正在刷新…';
     }
-    _ptrConfig = { screenId: screenId, refreshFn: refreshFn };
+    // 保持页面略微下移，显示刷新状态
+    screen.style.transition = 'transform .2s ease';
+    screen.style.transform = 'translateY(55px)';
+    
     try{
       refreshFn(function(){
         finishRefresh();
@@ -1639,9 +1661,10 @@ function initPullToRefresh(screenId, refreshFn){
         if(textEl)textEl.textContent = '下拉刷新';
       }, 400);
     }
+    resetScreenTranslate(true);
   }
   
-  // 触摸事件（移动端）- 都用 passive:false 以便 preventDefault
+  // 触摸事件
   screen.addEventListener('touchstart', onTouchStart, {passive:false});
   screen.addEventListener('touchmove', onTouchMove, {passive:false});
   screen.addEventListener('touchend', onTouchEnd);
@@ -1664,12 +1687,14 @@ function initPullToRefresh(screenId, refreshFn){
     pullingDist = y - startY;
     if(pullingDist <= 0){
       pulling = false;
+      resetScreenTranslate(true);
       var pi = _ensurePtrIndicator();
       if(pi){pi.style.height='0px';pi.style.opacity='0';}
       return;
     }
-    var damped = pullingDist * 0.4;
-    setIndicatorProgress(damped);
+    var damped = Math.min(pullingDist * 0.5, MAX_PULL);
+    setScreenTranslate(damped);
+    setIndicator(damped);
   });
   document.addEventListener('mouseup', function(){
     if(!mouseDown)return;
@@ -3614,19 +3639,59 @@ if('serviceWorker' in navigator){
 
 // 初始化下拉刷新（前三个页面）
 initPullToRefresh('screen-home', function(done){
-  renderHome();
-  showToast('天气数据已更新');
-  setTimeout(done, 800);
+  // 真正刷新：重新请求后端天气数据
+  api.getWeather(S.city,S.district,S.sourceId).then(function(w){
+    if(w){
+      LAST_WEATHER=w;
+      updateWeatherDisplay(w);
+    }
+    showToast('天气数据已更新');
+    done();
+  }).catch(function(){
+    showToast('刷新完成');
+    done();
+  });
 });
 initPullToRefresh('screen-leaderboard', function(done){
-  renderLeaderboard();
-  showToast('排行榜已更新');
-  setTimeout(done, 600);
+  // 真正刷新：重新请求后端准确率数据
+  var range = S.range || '7d';
+  api.getAccuracyRank(S.city, S.district, range).then(function(){
+    LAST_ACCURACY = null;
+    renderLeaderboard();
+    showToast('排行榜已更新');
+    done();
+  }).catch(function(){
+    renderLeaderboard();
+    showToast('刷新完成');
+    done();
+  });
 });
 initPullToRefresh('screen-community', function(done){
-  renderCommunity();
-  showToast('社区已更新');
-  setTimeout(done, 600);
+  // 真正刷新：重新请求后端社区帖子
+  api.getFeeds('hot').then(function(feeds){
+    if(feeds && feeds.length !== undefined){
+      // 更新全局 FEEDS 数据
+      for(var i=0;i<feeds.length;i++){
+        var found=false;
+        for(var j=0;j<FEEDS.length;j++){
+          if(FEEDS[j].id===feeds[i].id){
+            FEEDS[j]=feeds[i];
+            found=true;
+            break;
+          }
+        }
+        if(!found)FEEDS.push(feeds[i]);
+      }
+      FEEDS.sort(function(a,b){return b.id-a.id});
+    }
+    renderCommunity();
+    showToast('社区已更新');
+    done();
+  }).catch(function(){
+    renderCommunity();
+    showToast('刷新完成');
+    done();
+  });
 });
 
 try{
