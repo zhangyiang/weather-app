@@ -73,21 +73,8 @@ html.app-mode .status-bar{display:none}
 html.app-mode .home-hero{padding-top:20px}
 html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(var(--tab-h) + env(safe-area-inset-bottom))}
 
-/* ===== 竖屏锁定：仅在手机屏（≤900px宽度）横屏时显示遮罩，桌面端不受影响 ===== */
-.orientation-lock{
-  position:fixed;inset:0;z-index:999999;background:var(--accent);color:#fff;
-  display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
-  font-weight:600;font-size:18px;padding:24px;text-align:center;
-}
-.orientation-lock svg{width:80px;height:80px;animation:rotateHint 2s ease-in-out infinite}
-@keyframes rotateHint{0%,100%{transform:rotate(0)}50%{transform:rotate(-90deg)}}
-/* 手机横屏时：只在屏幕宽度 ≤ 900px（即手机/小平板横屏）才显示遮罩 */
-@media (orientation:landscape) and (max-width:900px){
-  .orientation-lock{display:flex !important}
-  .device,body>*:not(.orientation-lock){display:none !important}
-  html,body{background:var(--accent) !important}
-}
-/* 桌面浏览器（>900px）即使横屏也不触发遮罩，保持手机预览框 */
+/* ===== 方向适配：允许横屏使用，不显示竖屏锁定遮罩 ===== */
+.orientation-lock{display:none !important}
 
 /* ===== 空区白边彻底清除：禁止整页回弹 ===== */
 .screen > *{min-height:0}
