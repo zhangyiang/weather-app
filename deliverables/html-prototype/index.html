@@ -367,7 +367,7 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 /* Profile */
 .pf-header{display:block;flex-shrink:0}
 .pf-header{background:linear-gradient(135deg,#3B82F6,#6366F1);color:#fff;padding:24px 20px 28px;text-align:center;position:relative;flex-shrink:0}
-.pf-avatar{width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 8px;border:3px solid rgba(255,255,255,0.3)}
+.pf-avatar{width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 8px;border:3px solid rgba(255,255,255,0.3);overflow:hidden;padding:0;position:relative}
 .pf-name{font-size:18px;font-weight:700}
 .pf-id{font-size:12px;opacity:0.7;margin-top:2px}
 .pf-stats{display:flex;justify-content:center;gap:48px;margin-top:16px}
@@ -509,7 +509,7 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .up-back{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;border:1px solid rgba(255,255,255,0.3)}
 .up-back svg{width:18px;height:18px;color:#fff}
 .up-avatar{width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:600;margin:0 auto 10px;border:3px solid rgba(255,255,255,0.3);overflow:hidden}
-.up-avatar img{width:100%;height:100%;object-fit:cover}
+.up-avatar img{display:block;width:100%;height:100%;object-fit:cover;object-position:center}
 .up-name{font-size:18px;font-weight:700}
 .up-id{font-size:12px;opacity:0.75;margin-top:2px}
 .up-stats{display:flex;justify-content:center;gap:48px;margin-top:14px}
@@ -2557,23 +2557,20 @@ function applyAvatarTo(el){
   if(!el)return;
   var img=getAvatarImage();
   var ch=(S.username||'W').charAt(0).toUpperCase();
+  var avatarHtml='<img src="'+img+'" alt="头像" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover;object-position:center;background:rgba(255,255,255,0.25)">'+_AVATAR_OVERLAY_HTML;
+  var fallbackHtml=ch+_AVATAR_OVERLAY_HTML;
   if(img && img.startsWith('data:')){
-    // 验证 dataURL 有效性
     var testImg=new Image();
-    testImg.onload=function(){
-      el.innerHTML='<img src="'+img+'" alt="头像" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.parentNode.innerHTML=\''+ch+'\''+_AVATAR_OVERLAY_HTML+'\'">'+_AVATAR_OVERLAY_HTML;
-    };
+    testImg.onload=function(){el.innerHTML=avatarHtml;};
     testImg.onerror=function(){
-      // 图片无效，清除无效缓存
       localStorage.removeItem('wb_avatar');
-      el.innerHTML=ch+_AVATAR_OVERLAY_HTML;
+      el.innerHTML=fallbackHtml;
     };
     testImg.src=img;
   }else if(img){
-    // 非 dataURL（可能是 URL），直接使用
-    el.innerHTML='<img src="'+img+'" alt="头像" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.parentNode.innerHTML=\''+ch+'\''+_AVATAR_OVERLAY_HTML+'\'">'+_AVATAR_OVERLAY_HTML;
+    el.innerHTML=avatarHtml;
   }else{
-    el.innerHTML=ch+_AVATAR_OVERLAY_HTML;
+    el.innerHTML=fallbackHtml;
   }
 }
 function renderProfile(){
@@ -2664,43 +2661,109 @@ function avatarPickFromAlbum(){
   var input=document.getElementById('avatarFileInput');
   if(input){input.value='';input.click();}
 }
-// file input 选中文件后：读取为 dataURL 并应用为头像
+// 读取图片 EXIF 方向标签（0x0112），返回 1-8 的方向值
+// 方向含义：1=正常, 2=水平翻转, 3=旋转180°, 4=垂直翻转, 5=水平翻转+旋转90°, 6=旋转90°, 7=水平翻转+旋转270°, 8=旋转270°
+function getImageOrientation(file){
+  return new Promise(function(resolve){
+    if(!file||!file.type||!file.type.startsWith('image/')){resolve(1);return;}
+    var reader=new FileReader();
+    reader.onload=function(e){
+      try{
+        var view=new DataView(e.target.result);
+        if(view.byteLength<4){resolve(1);return;}
+        var magic=view.getUint16(0);
+        if(magic!==0x4949&&magic!==0x4D4D){resolve(1);return;}
+        var littleEndian=magic===0x4949;
+        var ifdOffset=view.getUint32(2,littleEndian);
+        if(ifdOffset+2>view.byteLength){resolve(1);return;}
+        var entries=view.getUint16(ifdOffset,littleEndian);
+        for(var i=0;i<entries;i++){
+          var entryOff=ifdOffset+2+i*12;
+          if(entryOff+12>view.byteLength)break;
+          var tag=view.getUint16(entryOff,littleEndian);
+          if(tag===0x0112){resolve(view.getUint16(entryOff+8,littleEndian));return;}
+        }
+        resolve(1);
+      }catch(err){resolve(1);}
+    };
+    reader.onerror=function(){resolve(1);};
+    reader.readAsArrayBuffer(file.slice(0,131072)); // 只读前 128KB，足够覆盖 EXIF
+  });
+}
+// file input 选中文件后：先读取 EXIF 方向，再读取为 dataURL 并应用为头像
 function onAvatarFileSelected(input){
   if(!input||!input.files||!input.files[0])return;
   var file=input.files[0];
   if(!file.type.startsWith('image/')){showToast('请选择图片文件');return;}
-  var reader=new FileReader();
-  reader.onload=function(e){
-    applyAvatarFromDataURL(e.target.result);
-  };
-  reader.onerror=function(){showToast('图片读取失败');};
-  reader.readAsDataURL(file);
+  getImageOrientation(file).then(function(orientation){
+    var reader=new FileReader();
+    reader.onload=function(e){
+      applyAvatarFromDataURL(e.target.result, orientation);
+    };
+    reader.onerror=function(){showToast('图片读取失败');};
+    reader.readAsDataURL(file);
+  });
 }
 // 把 dataURL 应用为头像并持久化到 localStorage 与后端
-function applyAvatarFromDataURL(dataUrl){
+// orientation: EXIF 方向值 (1-8)，用于在 Canvas 绘制时正确旋转/翻转图片
+function applyAvatarFromDataURL(dataUrl, orientation){
   if(!dataUrl){return;}
-  // 简单压缩到合理尺寸（用 canvas 缩放到 200x200 正方形）
+  orientation = orientation || 1;
   try{
     var img=new Image();
     img.onload=function(){
-      var canvas=document.createElement('canvas');
+      var rawW=img.width, rawH=img.height;
+      var needTransform=false;
+      var transOrient=1;
+      
+      // 检测浏览器是否已自动应用 EXIF：
+      // 对于需要 90°/270° 旋转的方向 (5-8)，旋转后宽高应互换
+      // 如果 rawW 仍然大于 rawH，说明浏览器没有自动旋转，需要手动处理
+      // 方向 2-4（翻转/180°）现代浏览器通常已自动处理，无需手动干预
+      if(orientation>=5 && orientation<=8 && rawW>rawH){
+        needTransform=true;
+        transOrient=orientation;
+      }
+      
       var size=200;
-      canvas.width=size;canvas.height=size;
-      var ctx=canvas.getContext('2d');
-      // 居中裁剪为正方形
-      var minDim=Math.min(img.width,img.height);
-      var sx=(img.width-minDim)/2;
-      var sy=(img.height-minDim)/2;
-      ctx.drawImage(img,sx,sy,minDim,minDim,0,0,size,size);
-      var compressed=canvas.toDataURL('image/jpeg',0.75);
+      var finalCanvas=document.createElement('canvas');
+      finalCanvas.width=size;finalCanvas.height=size;
+      var fctx=finalCanvas.getContext('2d');
+      
+      if(needTransform){
+        // 步骤1：在临时画布上对整张图应用 EXIF 变换
+        var tmpW=rawH,tmpH=rawW; // 90°/270° 后宽高互换
+        var tmpCanvas=document.createElement('canvas');
+        tmpCanvas.width=tmpW;tmpCanvas.height=tmpH;
+        var tctx=tmpCanvas.getContext('2d');
+        tctx.save();
+        switch(transOrient){
+          case 5: tctx.translate(0,tmpH); tctx.rotate(Math.PI/2); tctx.scale(-1,1); break;
+          case 6: tctx.translate(tmpW,0); tctx.rotate(Math.PI/2); break;
+          case 7: tctx.translate(tmpW,0); tctx.rotate(-Math.PI/2); tctx.scale(-1,1); break;
+          case 8: tctx.translate(0,tmpH); tctx.rotate(-Math.PI/2); break;
+        }
+        tctx.drawImage(img,0,0);
+        tctx.restore();
+        
+        // 步骤2：从变换后的图中裁剪中心正方形并缩放到 200x200
+        var minDim=Math.min(tmpW,tmpH);
+        var sx=(tmpW-minDim)/2, sy=(tmpH-minDim)/2;
+        fctx.drawImage(tmpCanvas,sx,sy,minDim,minDim,0,0,size,size);
+      }else{
+        // 无需变换：直接从原图裁剪中心并缩放
+        var minDim2=Math.min(rawW,rawH);
+        var sx2=(rawW-minDim2)/2, sy2=(rawH-minDim2)/2;
+        fctx.drawImage(img,sx2,sy2,minDim2,minDim2,0,0,size,size);
+      }
+      
+      var compressed=finalCanvas.toDataURL('image/jpeg',0.75);
       setAvatarImage(compressed);
       applyAvatarTo(document.getElementById('pfAvatar'));
       showToast('头像已更新');
-      // 同步到后端（拍照/相册均在竖屏下进行；后端会后续补充存储）
       syncProfileToBackend({avatar:compressed});
     };
     img.onerror=function(){
-      // 图片加载失败时直接用原图
       setAvatarImage(dataUrl);
       applyAvatarTo(document.getElementById('pfAvatar'));
       showToast('头像已更新');
