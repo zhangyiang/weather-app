@@ -428,6 +428,7 @@ FEEDS = [
         "id": 1, "photo": "blue", "weather": "晴 · 28°C",
         "user": "天空观察者", "owner": "天空观察者", "avatarColor": "blue", "district": "朝阳区",
         "timestamp": time.time() - 2 * 3600,
+        "lat": 39.92, "lng": 116.45,
         "likes": 128, "liked": False, "comments": 12,
         "caption": "今日北京蓝天白云，能见度极佳！ECMWF预报准确率今天拉满了。",
         "comments_list": [
@@ -439,6 +440,7 @@ FEEDS = [
         "id": 2, "photo": "orange", "weather": "多云 · 22°C",
         "user": "云朵收藏家", "owner": "云朵收藏家", "avatarColor": "orange", "district": "海淀区",
         "timestamp": time.time() - 4 * 3600,
+        "lat": 39.96, "lng": 116.30,
         "likes": 95, "liked": False, "comments": 8,
         "caption": "海淀区下午的火烧云，GFS预报的云量跟实况很接近。",
         "comments_list": [
@@ -449,6 +451,7 @@ FEEDS = [
         "id": 3, "photo": "gray", "weather": "阴 · 18°C",
         "user": "阴天爱好者", "owner": "阴天爱好者", "avatarColor": "gray", "district": "通州区",
         "timestamp": time.time() - 6 * 3600,
+        "lat": 39.91, "lng": 116.66,
         "likes": 67, "liked": False, "comments": 5,
         "caption": "通州今天全天阴天，CMA-MESO预报准确。",
         "comments_list": [
@@ -459,6 +462,7 @@ FEEDS = [
         "id": 4, "photo": "green", "weather": "晴 · 25°C",
         "user": "绿色天空", "owner": "绿色天空", "avatarColor": "green", "district": "丰台区",
         "timestamp": time.time() - 8 * 3600,
+        "lat": 39.86, "lng": 116.29,
         "likes": 152, "liked": False, "comments": 15,
         "caption": "丰台今天空气质量优！能见度超20公里。",
         "comments_list": [
@@ -470,6 +474,7 @@ FEEDS = [
         "id": 5, "photo": "purple", "weather": "多云 · 20°C",
         "user": "紫色黄昏", "owner": "紫色黄昏", "avatarColor": "purple", "district": "昌平区",
         "timestamp": time.time() - 12 * 3600,
+        "lat": 40.22, "lng": 116.23,
         "likes": 203, "liked": False, "comments": 20,
         "caption": "昨晚昌平的晚霞太绝了！彩云短临的分钟级预报帮我掐准了时间。",
         "comments_list": [
@@ -2596,15 +2601,23 @@ def _build_avatar_map():
 
 
 @app.get("/api/feeds", tags=["社区"], summary="获取社区动态列表")
-def get_feeds(filter: str = Query("hot", description="排序方式: hot(热门) / new(最新) / near(附近)")):
-    """返回社区动态列表，支持按热门/最新/附近排序。附带作者头像。"""
+def get_feeds(filter: str = Query("hot", description="排序方式: hot(热门) / new(最新) / near(附近)"), authorization: str = Header(None)):
+    """返回社区动态列表，支持按热门/最新/附近排序。附带作者头像，liked 按当前登录用户返回。"""
     feeds = copy.deepcopy(FEEDS)
     # 构建头像映射，注入到每条帖子和评论中
     avatar_map = _build_avatar_map()
+    # 解析当前登录用户，按其身份返回 liked 状态（不同账号互不干扰）
+    current_user = _require_user(authorization) if authorization else None
     for f in feeds:
         owner = f.get("owner") or f.get("user") or ""
         if owner and owner in avatar_map:
             f["avatar"] = avatar_map[owner]
+        # 按当前用户设置 liked，未登录恒为 false
+        liked_by = f.get("liked_by", [])
+        if current_user:
+            f["liked"] = current_user["username"] in liked_by
+        else:
+            f["liked"] = False
         # 评论也注入头像
         for c in f.get("comments_list", []):
             cname = c.get("name", "")
@@ -2620,26 +2633,42 @@ def get_feeds(filter: str = Query("hot", description="排序方式: hot(热门) 
 
 
 @app.get("/api/feeds/{feed_id}", tags=["社区"], summary="获取动态详情")
-def get_feed(feed_id: int):
-    """返回指定动态的详细信息（含评论列表）"""
+def get_feed(feed_id: int, authorization: str = Header(None)):
+    """返回指定动态的详细信息（含评论列表），liked 按当前登录用户返回。"""
     for f in FEEDS:
         if f["id"] == feed_id:
-            return copy.deepcopy(f)
+            feed = copy.deepcopy(f)
+            current_user = _require_user(authorization) if authorization else None
+            liked_by = feed.get("liked_by", [])
+            if current_user:
+                feed["liked"] = current_user["username"] in liked_by
+            else:
+                feed["liked"] = False
+            return feed
     return None
 
 
 @app.post("/api/feeds/{feed_id}/toggle-like", tags=["社区"], summary="点赞 / 取消点赞")
 def toggle_like(feed_id: int, authorization: str = Header(None)):
-    """切换指定动态的点赞状态，返回最新点赞数（需登录）"""
+    """切换指定动态的点赞状态，返回当前用户的点赞状态与最新点赞数（需登录）"""
     user = _require_user(authorization)
     if not user:
         return JSONResponse(status_code=401, content={"error": "请先登录后再操作"})
     for f in FEEDS:
         if f["id"] == feed_id:
-            f["liked"] = not f["liked"]
-            f["likes"] += 1 if f["liked"] else -1
+            # 按用户记录点赞，避免不同账号共享同一 liked 状态
+            liked_by = f.setdefault("liked_by", [])
+            username = user["username"]
+            if username in liked_by:
+                liked_by.remove(username)
+                liked = False
+                f["likes"] = max(0, f.get("likes", 0) - 1)
+            else:
+                liked_by.append(username)
+                liked = True
+                f["likes"] = f.get("likes", 0) + 1
             _save_data()
-            return {"liked": f["liked"], "likes": f["likes"]}
+            return {"liked": liked, "likes": f["likes"]}
     return JSONResponse(status_code=404, content={"error": "动态不存在"})
 
 

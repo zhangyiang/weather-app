@@ -1073,11 +1073,13 @@ var api = {
   },
   // GET /api/feeds?filter=hot|new|near
   getFeeds: function(filter) {
-    return fetch('/api/feeds?filter=' + filter).then(function(r) { return r.json(); });
+    var h = authHeader();
+    return fetch('/api/feeds?filter=' + filter, { headers: h }).then(function(r) { return r.json(); });
   },
   // GET /api/feeds/:id
   getFeed: function(id) {
-    return fetch('/api/feeds/' + id).then(function(r) { return r.json(); });
+    var h = authHeader();
+    return fetch('/api/feeds/' + id, { headers: h }).then(function(r) { return r.json(); });
   },
   // POST /api/feeds/:id/toggle-like（需登录）
   toggleLike: function(feedId) {
@@ -3612,6 +3614,11 @@ function publishPendingPhotos(){
 // ===== 地理位置 / 附近排序 =====
 function _h(s){var h=0;for(var i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return Math.abs(h);}
 function feedCoords(f){
+  // 优先用动态的真实 GPS 坐标
+  if(typeof f.lat==='number' && typeof f.lng==='number'){
+    return {lat:f.lat, lng:f.lng};
+  }
+  // 回退：种子数据无 GPS，用 district+id 哈希出伪坐标
   var h=_h((f.district||'')+f.id);
   return {lat:22+(h%230)/10, lng:100+((h>>8)%250)/10};
 }
