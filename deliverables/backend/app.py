@@ -2635,16 +2635,43 @@ class PostFeedRequest(BaseModel):
     photos: list = []  # base64 编码的图片数组
     weather: str = ""
     district: str = ""
+    location: dict = {}  # {city, district, lat, lng} 精确地理位置
 
 
 @app.post("/api/feed/post", tags=["社区"], summary="发布动态")
 def post_feed(req: PostFeedRequest, authorization: str = Header(None)):
-    """发布新动态（支持多图+文字），需登录"""
+    """发布新动态（支持多图+文字），需登录。附带精确地理位置。"""
     user = _require_user(authorization)
     if not user:
         return JSONResponse(status_code=401, content={"error": "请先登录后再操作"})
     new_id = max([f["id"] for f in FEEDS], default=0) + 1
     now_ts = time.time()
+
+    # 精确地理位置：优先用 location 中的坐标做反向地理编码
+    loc = req.location or {}
+    feed_city = loc.get("city", "")
+    feed_district = loc.get("district", "")
+    lat = loc.get("lat")
+    lng = loc.get("lng")
+    # 如果有坐标但没有城市名，用后端 reverse geocode 获取精确位置
+    if lat is not None and lng is not None and not feed_city:
+        try:
+            geo_r = reverse_geocode(float(lat), float(lng))
+            if geo_r and geo_r.get("city"):
+                feed_city = geo_r["city"]
+                feed_district = geo_r.get("district", "")
+        except Exception:
+            pass
+    # 拼装位置显示文本
+    if feed_city and feed_district:
+        district_str = feed_city + " " + feed_district
+    elif feed_city:
+        district_str = feed_city
+    elif req.district:
+        district_str = req.district
+    else:
+        district_str = "未知"
+
     feed = {
         "id": new_id,
         "photo": req.photos[0] if req.photos else "blue",
@@ -2653,7 +2680,9 @@ def post_feed(req: PostFeedRequest, authorization: str = Header(None)):
         "user": user["username"],
         "owner": user["username"],
         "avatarColor": "blue",
-        "district": req.district or "未知",
+        "district": district_str,
+        "lat": lat,
+        "lng": lng,
         "timestamp": now_ts,
         "time": _fmt_relative_time(now_ts),
         "likes": 0,

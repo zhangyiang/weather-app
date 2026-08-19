@@ -3454,9 +3454,9 @@ function publishPendingPhotos(){
   var btn=document.getElementById('camPublishBtn');
   if(btn){btn.disabled=true;btn.textContent='发表中...';}
   stopCamera();
-  // 附带位置信息
-  var location={city:S.city,district:S.district,lat:S.userLat,lng:S.userLng};
-  api.postFeed(photos,caption,location).then(function(res){
+  // 附带精确位置信息：如果有坐标就带上，没有则尝试临时获取
+  var sendPost=function(loc){
+    api.postFeed(photos,caption,loc).then(function(res){
     if(btn){btn.disabled=false;btn.textContent='发表';}
     if(!res||!res.ok){
       if(res&&res.status===401){showToast('请先登录');showLoginModal();}
@@ -3480,7 +3480,7 @@ function publishPendingPhotos(){
         user:S.username||'我',
         owner:S.username||S.userId||'我',
         avatarColor:'blue',
-        district:S.city+' '+S.district,
+        district:(loc.city||S.city)+' '+(loc.district||S.district),
         timestamp:Date.now()/1000,
         time:'刚刚',
         likes:0,liked:false,comments:0,
@@ -3516,6 +3516,25 @@ function publishPendingPhotos(){
     startCamera();
     showPreview();
   });
+  };
+  // 发帖前确保有精确坐标
+  if(S.userLat!=null && S.userLng!=null){
+    sendPost({city:S.city,district:S.district,lat:S.userLat,lng:S.userLng});
+  }else if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(
+      function(p){
+        S.userLat=p.coords.latitude;S.userLng=p.coords.longitude;
+        sendPost({city:S.city,district:S.district,lat:p.coords.latitude,lng:p.coords.longitude});
+      },
+      function(){
+        // 定位失败也允许发帖，只是不带坐标
+        sendPost({city:S.city,district:S.district});
+      },
+      {enableHighAccuracy:true,timeout:8000,maximumAge:60000}
+    );
+  }else{
+    sendPost({city:S.city,district:S.district});
+  }
 }
 
 // ===== 地理位置 / 附近排序 =====
