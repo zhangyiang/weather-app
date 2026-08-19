@@ -383,56 +383,104 @@ NOTIFICATIONS = [
     {"type": "comment", "title": "气象迷 评论了你的照片", "text": "能见度确实好，PM2.5应该很低", "timeOffset": -14400000, "read": True, "actor": "气象迷", "feedId": 1},
 ]
 
+# 根据时间戳计算相对时间字符串（秒级时间戳）
+def _fmt_relative_time(ts):
+    if not ts:
+        return "刚刚"
+    now = time.time()
+    diff = now - ts
+    if diff < 60:
+        return "刚刚"
+    if diff < 3600:
+        return str(int(diff / 60)) + "分钟前"
+    if diff < 86400:
+        return str(int(diff / 3600)) + "小时前"
+    if diff < 2592000:
+        return str(int(diff / 86400)) + "天前"
+    # 超过30天显示日期
+    dt = datetime.fromtimestamp(ts)
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+# 给 FEEDS 的 time 字段赋值（基于 timestamp 动态计算）
+def _refresh_feed_times():
+    """给所有 FEEDS 填充 timestamp 并计算 time 字符串。
+    旧数据可能没有 timestamp 字段，用当前时间兜底。"""
+    now = time.time()
+    for f in FEEDS:
+        # 确保有 timestamp：没有就用当前时间兜底
+        if "timestamp" not in f or not f.get("timestamp"):
+            ts = now
+        else:
+            ts = f["timestamp"]
+        f["timestamp"] = ts
+        f["time"] = _fmt_relative_time(ts)
+        # 评论的 time 也根据 timestamp 更新
+        for c in f.get("comments_list", []):
+            if "timestamp" not in c or not c.get("timestamp"):
+                cts = ts
+            else:
+                cts = c["timestamp"]
+            c["timestamp"] = cts
+            c["time"] = _fmt_relative_time(cts)
+
 FEEDS = [
     {
         "id": 1, "photo": "blue", "weather": "晴 · 28°C",
-        "user": "天空观察者", "owner": "天空观察者", "avatarColor": "blue", "district": "朝阳区", "time": "2小时前",
+        "user": "天空观察者", "owner": "天空观察者", "avatarColor": "blue", "district": "朝阳区",
+        "timestamp": time.time() - 2 * 3600,
         "likes": 128, "liked": False, "comments": 12,
         "caption": "今日北京蓝天白云，能见度极佳！ECMWF预报准确率今天拉满了。",
         "comments_list": [
-            {"name": "小雨滴", "color": "green", "text": "这蓝色太治愈了！", "time": "1小时前"},
-            {"name": "气象迷", "color": "orange", "text": "能见度确实好，PM2.5应该很低", "time": "50分钟前"},
+            {"name": "小雨滴", "color": "green", "text": "这蓝色太治愈了！", "timestamp": time.time() - 1 * 3600},
+            {"name": "气象迷", "color": "orange", "text": "能见度确实好，PM2.5应该很低", "timestamp": time.time() - 50 * 60},
         ],
     },
     {
         "id": 2, "photo": "orange", "weather": "多云 · 22°C",
-        "user": "云朵收藏家", "owner": "云朵收藏家", "avatarColor": "orange", "district": "海淀区", "time": "4小时前",
+        "user": "云朵收藏家", "owner": "云朵收藏家", "avatarColor": "orange", "district": "海淀区",
+        "timestamp": time.time() - 4 * 3600,
         "likes": 95, "liked": False, "comments": 8,
         "caption": "海淀区下午的火烧云，GFS预报的云量跟实况很接近。",
         "comments_list": [
-            {"name": "晚霞猎人", "color": "purple", "text": "这张太美了！什么时间拍的？", "time": "3小时前"},
+            {"name": "晚霞猎人", "color": "purple", "text": "这张太美了！什么时间拍的？", "timestamp": time.time() - 3 * 3600},
         ],
     },
     {
         "id": 3, "photo": "gray", "weather": "阴 · 18°C",
-        "user": "阴天爱好者", "owner": "阴天爱好者", "avatarColor": "gray", "district": "通州区", "time": "6小时前",
+        "user": "阴天爱好者", "owner": "阴天爱好者", "avatarColor": "gray", "district": "通州区",
+        "timestamp": time.time() - 6 * 3600,
         "likes": 67, "liked": False, "comments": 5,
         "caption": "通州今天全天阴天，CMA-MESO预报准确。",
         "comments_list": [
-            {"name": "天气小白", "color": "blue", "text": "请问用哪个源最准？", "time": "5小时前"},
+            {"name": "天气小白", "color": "blue", "text": "请问用哪个源最准？", "timestamp": time.time() - 5 * 3600},
         ],
     },
     {
         "id": 4, "photo": "green", "weather": "晴 · 25°C",
-        "user": "绿色天空", "owner": "绿色天空", "avatarColor": "green", "district": "丰台区", "time": "8小时前",
+        "user": "绿色天空", "owner": "绿色天空", "avatarColor": "green", "district": "丰台区",
+        "timestamp": time.time() - 8 * 3600,
         "likes": 152, "liked": False, "comments": 15,
         "caption": "丰台今天空气质量优！能见度超20公里。",
         "comments_list": [
-            {"name": "环保达人", "color": "orange", "text": "北京蓝天越来越多了", "time": "7小时前"},
-            {"name": "气象迷", "color": "blue", "text": "确实，近年治理效果明显", "time": "6小时前"},
+            {"name": "环保达人", "color": "orange", "text": "北京蓝天越来越多了", "timestamp": time.time() - 7 * 3600},
+            {"name": "气象迷", "color": "blue", "text": "确实，近年治理效果明显", "timestamp": time.time() - 6 * 3600},
         ],
     },
     {
         "id": 5, "photo": "purple", "weather": "多云 · 20°C",
-        "user": "紫色黄昏", "owner": "紫色黄昏", "avatarColor": "purple", "district": "昌平区", "time": "12小时前",
+        "user": "紫色黄昏", "owner": "紫色黄昏", "avatarColor": "purple", "district": "昌平区",
+        "timestamp": time.time() - 12 * 3600,
         "likes": 203, "liked": False, "comments": 20,
         "caption": "昨晚昌平的晚霞太绝了！彩云短临的分钟级预报帮我掐准了时间。",
         "comments_list": [
-            {"name": "天空观察者", "color": "blue", "text": "同款天空！我也拍了", "time": "10小时前"},
-            {"name": "晚霞猎人", "color": "orange", "text": "彩云短临确实好用", "time": "9小时前"},
+            {"name": "天空观察者", "color": "blue", "text": "同款天空！我也拍了", "timestamp": time.time() - 10 * 3600},
+            {"name": "晚霞猎人", "color": "orange", "text": "彩云短临确实好用", "timestamp": time.time() - 9 * 3600},
         ],
     },
 ]
+
+# 初始化：根据 timestamp 计算初始 time 字符串
+_refresh_feed_times()
 
 
 # =====================================================================
@@ -1889,6 +1937,8 @@ def _on_startup_load_data():
     except Exception:
         pass
     _load_data()
+    # 确保加载后的 feeds 时间戳字段完整，time 字符串精准
+    _refresh_feed_times()
     _start_persist_loop_if_needed()
     _start_cron_if_needed()
 
@@ -2567,7 +2617,8 @@ def add_comment(feed_id: int, req: CommentRequest, authorization: str = Header(N
         return JSONResponse(status_code=401, content={"error": "请先登录后再操作"})
     for f in FEEDS:
         if f["id"] == feed_id:
-            comment = {"name": user["username"], "color": "blue", "text": req.text, "time": "刚刚"}
+            now_ts = time.time()
+            comment = {"name": user["username"], "color": "blue", "text": req.text, "timestamp": now_ts, "time": _fmt_relative_time(now_ts)}
             f["comments_list"].append(comment)
             f["comments"] += 1
             _save_data()
@@ -2593,6 +2644,7 @@ def post_feed(req: PostFeedRequest, authorization: str = Header(None)):
     if not user:
         return JSONResponse(status_code=401, content={"error": "请先登录后再操作"})
     new_id = max([f["id"] for f in FEEDS], default=0) + 1
+    now_ts = time.time()
     feed = {
         "id": new_id,
         "photo": req.photos[0] if req.photos else "blue",
@@ -2602,7 +2654,8 @@ def post_feed(req: PostFeedRequest, authorization: str = Header(None)):
         "owner": user["username"],
         "avatarColor": "blue",
         "district": req.district or "未知",
-        "time": "刚刚",
+        "timestamp": now_ts,
+        "time": _fmt_relative_time(now_ts),
         "likes": 0,
         "liked": False,
         "comments": 0,

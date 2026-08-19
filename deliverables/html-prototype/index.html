@@ -1769,7 +1769,7 @@ function feedCardHTML(f,opts){
       '<div class="cm-card-meta">'+
         '<div class="cm-avatar" '+avatarAttr+'>'+firstChar+'</div>'+
         '<div><div class="cm-username" '+nameAttr+'>'+uname+'</div>'+
-        '<div class="cm-location">'+escHtml(f.district)+' \u00B7 '+escHtml(f.time)+'</div></div>'+
+        '<div class="cm-location">'+escHtml(f.district)+' \u00B7 '+escHtml(feedTimeDisplay(f))+'</div></div>'+
       '</div>'+
       '<div class="cm-caption">'+(f.caption?escHtml(f.caption):'')+'</div>'+
       (f.weather?'<div class="cm-weather-tag">'+wIcon(f.weather.indexOf('晴')>=0?'sunny':f.weather.indexOf('雨')>=0?'rainy':f.weather.indexOf('阴')>=0?'overcast':'cloudy',16)+'<span>'+escHtml(f.weather)+'</span></div>':'')+
@@ -1864,7 +1864,7 @@ function renderMyAlbum(){
     }
     html+='<div class="ma-cell" onclick="openFeed('+f.id+')">'+cell+
       '<button class="ma-cell-del" onclick="event.stopPropagation();deleteFeed('+f.id+')" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg></button>'+
-      '<div class="ma-cell-meta">'+escHtml(f.time||'')+'</div>'+
+      '<div class="ma-cell-meta">'+escHtml(feedTimeDisplay(f))+'</div>'+
       '</div>';
   });
   html+='</div>';
@@ -1902,7 +1902,7 @@ function openFeed(id){
   var likeIcon=isDetailLiked?'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>':'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
   var ch='';
   (f.comments_list||[]).forEach(function(c){
-    ch+='<div class="fd-comment"><div class="fd-c-avatar" style="background:'+avatarColor(c.color)+'">'+escHtml((c.name||'').charAt(0))+'</div><div class="fd-c-body"><div class="fd-c-name">'+escHtml(c.name)+'</div><div class="fd-c-text">'+escHtml(c.text)+'</div><div class="fd-c-time">'+escHtml(c.time)+'</div></div></div>';
+    ch+='<div class="fd-comment"><div class="fd-c-avatar" style="background:'+avatarColor(c.color)+'">'+escHtml((c.name||'').charAt(0))+'</div><div class="fd-c-body"><div class="fd-c-name">'+escHtml(c.name)+'</div><div class="fd-c-text">'+escHtml(c.text)+'</div><div class="fd-c-time">'+escHtml(c.timestamp?formatTime(c.timestamp):(c.time||''))+'</div></div></div>';
   });
   var user=f.user||'用户';
   var userClickAttr='onclick="openUserProfile(\''+user.replace(/'/g,"\\'")+'\')" style="background:'+avatarColor(f.avatarColor)+';cursor:pointer"';
@@ -1929,7 +1929,7 @@ function openFeed(id){
   }
   document.getElementById('fdBody').innerHTML=
     photoHtml+
-    '<div class="fd-meta"><div class="fd-avatar" '+userClickAttr+'>'+escHtml(user.charAt(0))+'</div><div><div class="fd-username" onclick="openUserProfile(\''+user.replace(/'/g,"\\'")+'\')" style="cursor:pointer">'+escHtml(user)+'</div><div class="fd-location">'+escHtml(f.district)+' \u00B7 '+escHtml(f.time)+'</div></div></div>'+
+    '<div class="fd-meta"><div class="fd-avatar" '+userClickAttr+'>'+escHtml(user.charAt(0))+'</div><div><div class="fd-username" onclick="openUserProfile(\''+user.replace(/'/g,"\\'")+'\')" style="cursor:pointer">'+escHtml(user)+'</div><div class="fd-location">'+escHtml(f.district)+' \u00B7 '+escHtml(feedTimeDisplay(f))+'</div></div></div>'+
     '<div class="fd-caption">'+(f.caption?escHtml(f.caption):'')+'</div>'+
     '<div class="fd-weather-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/></svg>'+escHtml(f.weather)+'</div>'+
     '<div class="fd-actions"><div class="fd-action '+likeCls+'" id="fdLike" onclick="toggleLike('+f.id+',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+likeIcon+'</svg><span>'+f.likes+'</span></div><div class="fd-action" onclick="showCommentModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>'+f.comments+'</span></div></div>'+
@@ -2046,7 +2046,7 @@ function appendCommentToDOM(c){
   if(!box)return;
   var div=document.createElement('div');
   div.className='fd-comment';
-  div.innerHTML='<div class="fd-c-avatar" style="background:'+avatarColor(c.color)+'">'+(c.name||'').charAt(0)+'</div><div class="fd-c-body"><div class="fd-c-name">'+c.name+'</div><div class="fd-c-text">'+c.text+'</div><div class="fd-c-time">'+c.time+'</div></div>';
+  div.innerHTML='<div class="fd-c-avatar" style="background:'+avatarColor(c.color)+'">'+(c.name||'').charAt(0)+'</div><div class="fd-c-body"><div class="fd-c-name">'+c.name+'</div><div class="fd-c-text">'+c.text+'</div><div class="fd-c-time">'+(c.timestamp?formatTime(c.timestamp):(c.time||''))+'</div></div>';
   box.appendChild(div);
 }
 // 更新详情页评论数显示
@@ -2069,7 +2069,7 @@ function submitComment(){
   var f=FEEDS.find(function(x){return x.id===S.feedId});
   if(!f){return;}
   // —— 乐观更新：先在本地追加评论并刷新计数 ——
-  var optimisticComment={name:S.username||'我',color:'blue',text:text,time:'刚刚'};
+  var optimisticComment={name:S.username||'我',color:'blue',text:text,timestamp:Date.now()/1000,time:'刚刚'};
   f.comments_list.push(optimisticComment);
   f.comments+=1;
   appendCommentToDOM(optimisticComment);
@@ -2120,7 +2120,7 @@ function submitFdComment(){
   var f=FEEDS.find(function(x){return x.id===S.feedId});
   if(!f){return;}
   // —— 乐观更新 ——
-  var optimisticComment={name:S.username||'我',color:'blue',text:text,time:'刚刚'};
+  var optimisticComment={name:S.username||'我',color:'blue',text:text,timestamp:Date.now()/1000,time:'刚刚'};
   f.comments_list.push(optimisticComment);
   f.comments+=1;
   appendCommentToDOM(optimisticComment);
@@ -2256,11 +2256,26 @@ function toggleFollowFromNotif(i){
   showToast(nowFollowing?'已关注 '+actor:'已取消关注 '+actor);
 }
 function formatTime(ts){
-  var diff=Date.now()-ts;
-  if(diff<60000)return '刚刚';
-  if(diff<3600000)return Math.floor(diff/60000)+'分钟前';
-  if(diff<86400000)return Math.floor(diff/3600000)+'小时前';
-  return Math.floor(diff/86400000)+'天前';
+  if(!ts)return '';
+  // 自动识别：秒级时间戳(10位) 或 毫秒级(13位)
+  var ms = ts < 1e12 ? ts * 1000 : ts;
+  var diff = Date.now() - ms;
+  if(diff < 60000) return '刚刚';
+  if(diff < 3600000) return Math.floor(diff/60000) + '分钟前';
+  if(diff < 86400000) return Math.floor(diff/3600000) + '小时前';
+  if(diff < 2592000000) return Math.floor(diff/86400000) + '天前';
+  // 超过30天显示标准日期
+  var d = new Date(ms);
+  var m = String(d.getMonth()+1).padStart(2,'0');
+  var day = String(d.getDate()).padStart(2,'0');
+  var h = String(d.getHours()).padStart(2,'0');
+  var min = String(d.getMinutes()).padStart(2,'0');
+  return d.getFullYear() + '-' + m + '-' + day + ' ' + h + ':' + min;
+}
+// 兼容旧数据：优先用 timestamp 计算，没有则用 time 字符串
+function feedTimeDisplay(f){
+  if(f.timestamp) return formatTime(f.timestamp);
+  return f.time || '';
 }
 function readNotif(i){
   api.markNotificationRead(i).then(function(){
@@ -2642,7 +2657,7 @@ function renderUserProfile(){
     html+='<div class="up-feed-card" onclick="openFeed('+f.id+')">'+photoHtml+
       '<div class="up-feed-body">'+
         (f.caption?'<div class="up-feed-caption">'+escHtml(f.caption)+'</div>':'')+
-        '<div class="up-feed-meta">'+escHtml(f.district||'')+' \u00B7 '+escHtml(f.time||'')+' · ❤ '+f.likes+' · 💬 '+f.comments+'</div>'+
+        '<div class="up-feed-meta">'+escHtml(f.district||'')+' \u00B7 '+escHtml(feedTimeDisplay(f))+' · ❤ '+f.likes+' · 💬 '+f.comments+'</div>'+
       '</div></div>';
   });
   feedsEl.innerHTML=html;
@@ -2968,6 +2983,7 @@ function publishPendingPhotos(){
         owner:S.username||S.userId||'我',
         avatarColor:'blue',
         district:S.city+' '+S.district,
+        timestamp:Date.now()/1000,
         time:'刚刚',
         likes:0,liked:false,comments:0,
         caption:caption,comments_list:[]
