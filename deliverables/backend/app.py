@@ -2568,10 +2568,48 @@ def mark_notification_read(idx: int):
     return True
 
 
+def _build_avatar_map():
+    """构建 username → avatar 映射，用于帖子/评论中显示头像"""
+    avatar_map = {}
+    if USER_STORE.mode == "mysql":
+        try:
+            conn = USER_STORE._connect()
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, username FROM users")
+                rows = cur.fetchall()
+            conn.close()
+            for row in rows:
+                uid = row["id"]
+                extras = _USER_EXTRAS.get(uid, {})
+                av = extras.get("avatar", "")
+                if av:
+                    avatar_map[row["username"]] = av
+        except Exception:
+            pass
+    else:
+        for uid, u in USER_STORE._mem.items():
+            extras = _USER_EXTRAS.get(uid, {})
+            av = extras.get("avatar", "")
+            if av:
+                avatar_map[u["username"]] = av
+    return avatar_map
+
+
 @app.get("/api/feeds", tags=["社区"], summary="获取社区动态列表")
 def get_feeds(filter: str = Query("hot", description="排序方式: hot(热门) / new(最新) / near(附近)")):
-    """返回社区动态列表，支持按热门/最新/附近排序"""
+    """返回社区动态列表，支持按热门/最新/附近排序。附带作者头像。"""
     feeds = copy.deepcopy(FEEDS)
+    # 构建头像映射，注入到每条帖子和评论中
+    avatar_map = _build_avatar_map()
+    for f in feeds:
+        owner = f.get("owner") or f.get("user") or ""
+        if owner and owner in avatar_map:
+            f["avatar"] = avatar_map[owner]
+        # 评论也注入头像
+        for c in f.get("comments_list", []):
+            cname = c.get("name", "")
+            if cname and cname in avatar_map:
+                c["avatar"] = avatar_map[cname]
     if filter == "new":
         feeds.sort(key=lambda x: -x["id"])
     elif filter == "near":
@@ -2619,6 +2657,11 @@ def add_comment(feed_id: int, req: CommentRequest, authorization: str = Header(N
         if f["id"] == feed_id:
             now_ts = time.time()
             comment = {"name": user["username"], "color": "blue", "text": req.text, "timestamp": now_ts, "time": _fmt_relative_time(now_ts)}
+            # 注入当前用户头像，使评论在跨用户视角下可见
+            user_extras = _USER_EXTRAS.get(user["id"], {})
+            av = user_extras.get("avatar", "")
+            if av:
+                comment["avatar"] = av
             f["comments_list"].append(comment)
             f["comments"] += 1
             _save_data()
@@ -2711,6 +2754,11 @@ def post_feed(req: PostFeedRequest, authorization: str = Header(None)):
         "caption": req.caption,
         "comments_list": [],
     }
+    # 注入当前用户头像，使动态在跨用户视角下可见
+    user_extras = _USER_EXTRAS.get(user["id"], {})
+    av = user_extras.get("avatar", "")
+    if av:
+        feed["avatar"] = av
     FEEDS.insert(0, feed)
     user["photos"] = user.get("photos", 0) + 1
     _save_data()

@@ -437,11 +437,18 @@ html.app-mode .tab-bar{padding-bottom:env(safe-area-inset-bottom);height:calc(va
 .cam-video-wrap{position:absolute;inset:0;width:100%;height:100%;z-index:0;overflow:hidden}
 /* 横屏时调整取景框为横向 */
 .cam-screen.landscape .cam-overlay{width:280px;height:180px}
-/* 横屏时按钮栏调整 */
-.cam-screen.landscape .cam-btn-bar{padding:14px 32px calc(20px + env(safe-area-inset-bottom))}
-.cam-screen.landscape .cam-capture{width:56px;height:56px}
+/* 横屏时整体改为横向布局，按钮栏移到右侧垂直排列（符合横屏握持习惯） */
+.cam-screen.landscape{flex-direction:row}
+.cam-screen.landscape .cam-view{flex:1;min-width:0}
+.cam-screen.landscape .cam-btn-bar{
+  flex-direction:column;
+  justify-content:space-around;
+  align-items:center;
+  padding:20px calc(10px + env(safe-area-inset-right)) 20px 6px;
+}
+.cam-screen.landscape .cam-capture{width:60px;height:60px}
 .cam-screen.landscape .cam-close,.cam-screen.landscape .cam-switch{width:40px;height:40px}
-/* 横屏时相册按钮位置调整 */
+/* 横屏时相册按钮保持在预览区左上角 */
 .cam-screen.landscape .cam-album{top:calc(env(safe-area-inset-top) + 6px);left:10px;width:36px;height:36px}
 .cam-screen.landscape .cam-hint{bottom:16px;font-size:12px}
 
@@ -1718,6 +1725,39 @@ function initPullToRefresh(screenId, refreshFn){
 
 // （旧的独立刷新函数已移除，统一用 pull-to-refresh）
 
+// 把后端返回的 feeds 合并到本地 FEEDS（保留本地图片/评论等字段），返回新数组
+// 社区页与"我的"页下拉刷新共用，保证数据一致
+function _mergeServerFeeds(feeds){
+  if(!feeds || feeds.length===undefined)return FEEDS;
+  var newFeeds=[];
+  var existingById={};
+  FEEDS.forEach(function(f){existingById[f.id]=f;});
+  feeds.forEach(function(nf){
+    var old=existingById[nf.id];
+    if(old){
+      if(!nf.photo && old.photo)nf.photo=old.photo;
+      if((!nf.photos||!nf.photos.length) && old.photos)nf.photos=old.photos;
+      if(nf.isImage===undefined && old.isImage!==undefined)nf.isImage=old.isImage;
+      if((!nf.comments_list||!nf.comments_list.length) && old.comments_list)nf.comments_list=old.comments_list;
+      if(!nf.district && old.district)nf.district=old.district;
+      if(!nf.user && old.user)nf.user=old.user;
+      if(!nf.owner && old.owner)nf.owner=old.owner;
+    }
+    if(!nf.photo && nf.photos && nf.photos.length)nf.photo=nf.photos[0];
+    if(!nf.photos && nf.photo)nf.photos=[nf.photo];
+    var firstImg=(typeof nf.photo==='string')?nf.photo:((nf.photos&&nf.photos[0])||'');
+    if(typeof firstImg!=='string')firstImg='';
+    if(nf.isImage===undefined)nf.isImage=firstImg.indexOf('data:')===0;
+    if(!nf.comments_list)nf.comments_list=[];
+    if(typeof nf.likes!=='number')nf.likes=0;
+    if(typeof nf.comments!=='number')nf.comments=0;
+    if(typeof nf.liked!=='boolean')nf.liked=false;
+    newFeeds.push(nf);
+  });
+  newFeeds.sort(function(a,b){return b.id-a.id;});
+  return newFeeds;
+}
+
 // ===== Leaderboard =====
 // 引擎底座排行榜：用 ENGINE_SOURCES 渲染 + 后端 accuracy 数据
 // 如果当前有 LAST_WEATHER.accuracy.ranking，就用真实得分；否则按引擎默认顺序渲染占位
@@ -1943,20 +1983,25 @@ function escHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 // 根据用户名获取头像 HTML：优先显示用户自定义头像图片，否则用首字母+颜色
-function getAvatarInnerHtml(username,color){
+// avatarUrl 参数可选：后端返回的 avatar 字段（data URL）
+function getAvatarInnerHtml(username,color,avatarUrl){
   var ch=escHtml((username||'W').charAt(0).toUpperCase());
   var bg=avatarColor(color);
-  // 尝试从 localStorage 读取该用户的头像
-  var avatarUrl='';
-  try{
-    // 先查自己的头像
-    if(S.loggedIn&&username===S.username){
-      avatarUrl=localStorage.getItem('wb_avatar')||'';
-    }else{
-      // 查其他用户的头像缓存
-      avatarUrl=localStorage.getItem('wb_avatar_'+username)||'';
-    }
-  }catch(e){}
+  // 优先使用传入的 avatarUrl（后端返回）
+  if(!avatarUrl){
+    try{
+      if(S.loggedIn&&username===S.username){
+        avatarUrl=localStorage.getItem('wb_avatar')||'';
+      }else{
+        avatarUrl=localStorage.getItem('wb_avatar_'+username)||'';
+      }
+    }catch(e){}
+  }else{
+    // 缓存到 localStorage 供下次使用
+    try{if(avatarUrl.indexOf('data:')===0&&username&&username!==S.username){
+      localStorage.setItem('wb_avatar_'+username,avatarUrl);
+    }}catch(e){}
+  }
   if(avatarUrl&&avatarUrl.indexOf('data:')===0){
     return '<img src="'+avatarUrl+'" alt="'+escHtml(username)+'" style="width:100%;height:100%;border-radius:50%;object-fit:cover;object-position:center;background:'+bg+'">';
   }
@@ -1976,7 +2021,7 @@ function feedCardHTML(f,opts){
   var likeCls=isLiked?'liked':'';
   var likeIcon=isLiked?'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>':'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
   var user=f.user||'用户';
-  var firstChar=getAvatarInnerHtml(user,f.avatarColor);
+  var firstChar=getAvatarInnerHtml(user,f.avatarColor,f.avatar);
   var uname=escHtml(user);
   var photoHtml='';
   if(f.isImage&&f.photo){
@@ -2137,7 +2182,7 @@ function openFeed(id){
   var likeIcon=isDetailLiked?'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none"/>':'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
   var ch='';
   (f.comments_list||[]).forEach(function(c,idx){
-    var cAvatarInner=getAvatarInnerHtml(c.name,c.color);
+    var cAvatarInner=getAvatarInnerHtml(c.name,c.color,c.avatar);
     var cAvatarClick='onclick="event.stopPropagation();openUserProfile(\''+escHtml(c.name).replace(/'/g,"\\'")+'\')" style="background:'+avatarColor(c.color)+';cursor:pointer"';
     // 自己的评论可以删除
     var delBtn='';
@@ -2147,7 +2192,7 @@ function openFeed(id){
     ch+='<div class="fd-comment" style="position:relative"><div class="fd-c-avatar" '+cAvatarClick+'>'+cAvatarInner+'</div><div class="fd-c-body"><div class="fd-c-name">'+escHtml(c.name)+'</div><div class="fd-c-text">'+escHtml(c.text)+'</div><div class="fd-c-time">'+escHtml(c.timestamp?formatTime(c.timestamp):(c.time||''))+'</div></div>'+delBtn+'</div>';
   });
   var user=f.user||'用户';
-  var userAvatarInner=getAvatarInnerHtml(user,f.avatarColor);
+  var userAvatarInner=getAvatarInnerHtml(user,f.avatarColor,f.avatar);
   var userClickAttr='onclick="openUserProfile(\''+user.replace(/'/g,"\\'")+'\')" style="background:'+avatarColor(f.avatarColor)+';cursor:pointer"';
   // 自己的帖子详情页右上角显示删除按钮
   var delBtnHtml='';
@@ -2363,7 +2408,7 @@ function appendCommentToDOM(c){
   div.className='fd-comment';
   div.style.position='relative';
   var cAvatarClick='onclick="event.stopPropagation();openUserProfile(\''+escHtml(c.name||'').replace(/'/g,"\\'")+'\')" style="background:'+avatarColor(c.color)+';cursor:pointer"';
-  div.innerHTML='<div class="fd-c-avatar" '+cAvatarClick+'>'+getAvatarInnerHtml(c.name,c.color)+'</div><div class="fd-c-body"><div class="fd-c-name">'+escHtml(c.name)+'</div><div class="fd-c-text">'+escHtml(c.text)+'</div><div class="fd-c-time">'+escHtml(c.timestamp?formatTime(c.timestamp):(c.time||''))+'</div></div>';
+  div.innerHTML='<div class="fd-c-avatar" '+cAvatarClick+'>'+getAvatarInnerHtml(c.name,c.color,c.avatar)+'</div><div class="fd-c-body"><div class="fd-c-name">'+escHtml(c.name)+'</div><div class="fd-c-text">'+escHtml(c.text)+'</div><div class="fd-c-time">'+escHtml(c.timestamp?formatTime(c.timestamp):(c.time||''))+'</div></div>';
   box.appendChild(div);
 }
 // 删除自己的评论
@@ -3076,9 +3121,15 @@ function renderUserProfile(){
   var username=S.viewingUser||'用户';
   document.getElementById('upName').textContent=username;
   document.getElementById('upId').textContent='@'+username;
-  // 头像：优先显示自定义头像
+  // 头像：优先从该用户的帖子中获取后端返回的 avatar
   var avatarEl=document.getElementById('upAvatar');
-  avatarEl.innerHTML=getAvatarInnerHtml(username);
+  var userAvatar='';
+  for(var i=0;i<FEEDS.length;i++){
+    var ff=FEEDS[i];
+    var owner=ff.owner||ff.user||'';
+    if(owner===username && ff.avatar){ userAvatar=ff.avatar; break; }
+  }
+  avatarEl.innerHTML=getAvatarInnerHtml(username,'blue',userAvatar);
   // 实拍数：该用户发的帖子数
   var userFeeds=FEEDS.filter(function(f){
     var owner=f.owner||f.user||'';
@@ -4041,43 +4092,44 @@ initPullToRefresh('screen-leaderboard', function(done){
 initPullToRefresh('screen-community', function(done){
   // 真正刷新：重新请求后端社区帖子
   api.getFeeds('hot').then(function(feeds){
-    if(feeds && feeds.length !== undefined){
-      // 合并：保留本地 photo/isImage/photos/comments_list 等字段不被服务器返回覆盖
-      var newFeeds=[];
-      var existingById={};
-      FEEDS.forEach(function(f){existingById[f.id]=f;});
-      feeds.forEach(function(nf){
-        var old=existingById[nf.id];
-        if(old){
-          // 保留本地图片数据（服务器可能不返回 base64 photo）
-          if(!nf.photo && old.photo)nf.photo=old.photo;
-          if((!nf.photos||!nf.photos.length) && old.photos)nf.photos=old.photos;
-          if(nf.isImage===undefined && old.isImage!==undefined)nf.isImage=old.isImage;
-          if((!nf.comments_list||!nf.comments_list.length) && old.comments_list)nf.comments_list=old.comments_list;
-          if(!nf.district && old.district)nf.district=old.district;
-          if(!nf.user && old.user)nf.user=old.user;
-          if(!nf.owner && old.owner)nf.owner=old.owner;
-        }
-        // 规范化字段
-        if(!nf.photo && nf.photos && nf.photos.length)nf.photo=nf.photos[0];
-        if(!nf.photos && nf.photo)nf.photos=[nf.photo];
-        var firstImg=(typeof nf.photo==='string')?nf.photo:((nf.photos&&nf.photos[0])||'');
-        if(typeof firstImg!=='string')firstImg='';
-        if(nf.isImage===undefined)nf.isImage=firstImg.indexOf('data:')===0;
-        if(!nf.comments_list)nf.comments_list=[];
-        if(typeof nf.likes!=='number')nf.likes=0;
-        if(typeof nf.comments!=='number')nf.comments=0;
-        if(typeof nf.liked!=='boolean')nf.liked=false;
-        newFeeds.push(nf);
-      });
-      FEEDS=newFeeds;
-      FEEDS.sort(function(a,b){return b.id-a.id});
-    }
+    FEEDS=_mergeServerFeeds(feeds);
     renderCommunity();
     showToast('社区已更新');
     done();
   }).catch(function(){
     renderCommunity();
+    showToast('刷新完成');
+    done();
+  });
+});
+// 第四个页面：我的 — 下拉刷新，刷新后把变化的粉丝/关注补上
+initPullToRefresh('screen-profile', function(done){
+  // 未登录：仅重新渲染本地数据
+  if(!S.loggedIn){
+    renderProfile();
+    showToast('已刷新');
+    done();
+    return;
+  }
+  // 并行刷新：社区动态（拿到其他用户最新动态/头像）+ 当前用户后端资料
+  var p1=api.getFeeds('hot').then(function(feeds){
+    FEEDS=_mergeServerFeeds(feeds);
+  }).catch(function(){});
+  var p2=api.getProfile().then(function(res){
+    if(res&&res.ok&&res.data){
+      var u=res.data;
+      if(typeof u.photos==='number'){S.photos=u.photos;}
+      if(typeof u.likes==='number'){S.likes=u.likes;}
+      _saveUserStats();
+    }
+  }).catch(function(){});
+  Promise.all([p1,p2]).then(function(){
+    // 重新渲染 profile，补上粉丝/关注的变化（从本地关注图读取最新值）
+    renderProfile();
+    showToast('已刷新');
+    done();
+  }).catch(function(){
+    renderProfile();
     showToast('刷新完成');
     done();
   });
