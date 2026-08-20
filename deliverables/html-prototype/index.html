@@ -1395,6 +1395,8 @@ function updateWeatherDisplay(w){
   if(w.ai_generated){
     updateText+=' · AI 生成';
   }
+  // 构建版本标记：方便用户确认当前访问的是哪个 commit（能否见度修复 58b87fc）
+  updateText+=' <span style="opacity:.5;font-size:11px;margin-left:4px">v58b87fc</span>';
   document.getElementById('homeUpdate').innerHTML=updateText;
 
   // Air badge — 按 US AQI 标准分级显示

@@ -3197,7 +3197,12 @@ def get_cities():
 @app.get("/api/health", tags=["系统"], summary="健康检查")
 def health_check():
     """服务健康检查端点"""
-    return {"status": "ok", "timestamp": _now_ms()}
+    return {
+        "status": "ok",
+        "timestamp": _now_ms(),
+        # 构建标记：用于在前端/curl 校验部署版本是否包含 vis/uv 修复
+        "build": os.environ.get("BUILD_COMMIT", "local-58b87fc"),
+    }
 
 
 # ---- 反向地理编码（GPS 定位 → 城市/区县）----
