@@ -2846,19 +2846,29 @@ def update_user_profile(req: UpdateProfileRequest, authorization: str = Header(N
     return {"ok": True, "user": user, "extras": _USER_EXTRAS.get(uid, {})}
 
 
-@app.get("/api/user/{user_id}/profile", tags=["用户"], summary="获取指定用户资料")
-def get_user_profile_by_id(user_id: int):
-    """返回指定用户的基本资料和扩展资料（头像等）"""
-    user = USER_STORE.get_by_id(user_id)
+@app.get("/api/user/profile", tags=["用户"], summary="获取当前用户资料")
+def get_user_profile(authorization: str = Header(None)):
+    """返回当前登录用户的基本资料（实拍数、获赞数等），需携带 Bearer Token"""
+    user = _require_user(authorization)
     if not user:
+        return JSONResponse(status_code=401, content={"error": "未登录或登录已过期"})
+    return user
+
+
+@app.get("/api/user/{username}/profile", tags=["用户"], summary="获取指定用户资料")
+def get_user_profile_by_name(username: str):
+    """返回指定用户的基本资料和扩展资料（头像等），按用户名查找"""
+    target = USER_STORE.get_by_credentials(username)
+    if not target:
         return JSONResponse(status_code=404, content={"error": "用户不存在"})
+    user_id = target["id"]
+    user = USER_STORE.get_by_id(user_id)
     extras = _USER_EXTRAS.get(user_id, {})
     following = _FOLLOWS.get(user_id, set())
     followers = set()
     for uid, fset in _FOLLOWS.items():
         if user_id in fset:
             followers.add(uid)
-    # 该用户发的帖子
     user_feeds = [f for f in FEEDS if f.get("owner") == user.get("username")]
     return {
         "user": user,
@@ -2870,33 +2880,38 @@ def get_user_profile_by_id(user_id: int):
     }
 
 
-@app.post("/api/user/{user_id}/follow", tags=["用户"], summary="关注/取消关注")
-def toggle_follow(user_id: int, authorization: str = Header(None)):
-    """切换关注状态（需登录）"""
+@app.post("/api/user/{username}/follow", tags=["用户"], summary="关注/取消关注")
+def toggle_follow(username: str, authorization: str = Header(None)):
+    """切换关注状态（需登录），按用户名查找目标用户"""
     user = _require_user(authorization)
     if not user:
         return JSONResponse(status_code=401, content={"error": "请先登录"})
     my_id = user["id"]
-    if my_id == user_id:
-        return JSONResponse(status_code=400, content={"error": "不能关注自己"})
-    target = USER_STORE.get_by_id(user_id)
+    target = USER_STORE.get_by_credentials(username)
     if not target:
         return JSONResponse(status_code=404, content={"error": "用户不存在"})
+    target_id = target["id"]
+    if my_id == target_id:
+        return JSONResponse(status_code=400, content={"error": "不能关注自己"})
     if my_id not in _FOLLOWS:
         _FOLLOWS[my_id] = set()
-    if user_id in _FOLLOWS[my_id]:
-        _FOLLOWS[my_id].discard(user_id)
+    if target_id in _FOLLOWS[my_id]:
+        _FOLLOWS[my_id].discard(target_id)
         following = False
     else:
-        _FOLLOWS[my_id].add(user_id)
+        _FOLLOWS[my_id].add(target_id)
         following = True
     _save_data()
-    return {"following": following}
+    return {"following": following, "target_username": username}
 
 
-@app.get("/api/user/{user_id}/followers", tags=["用户"], summary="获取粉丝列表")
-def get_followers(user_id: int):
-    """返回指定用户的粉丝列表"""
+@app.get("/api/user/{username}/followers", tags=["用户"], summary="获取粉丝列表")
+def get_followers(username: str):
+    """返回指定用户的粉丝列表，按用户名查找"""
+    target = USER_STORE.get_by_credentials(username)
+    if not target:
+        return []
+    user_id = target["id"]
     followers_ids = set()
     for uid, fset in _FOLLOWS.items():
         if user_id in fset:
@@ -2914,9 +2929,13 @@ def get_followers(user_id: int):
     return result
 
 
-@app.get("/api/user/{user_id}/following", tags=["用户"], summary="获取关注列表")
-def get_following(user_id: int):
-    """返回指定用户关注的列表"""
+@app.get("/api/user/{username}/following", tags=["用户"], summary="获取关注列表")
+def get_following(username: str):
+    """返回指定用户关注的列表，按用户名查找"""
+    target = USER_STORE.get_by_credentials(username)
+    if not target:
+        return []
+    user_id = target["id"]
     following_ids = _FOLLOWS.get(user_id, set())
     result = []
     for uid in following_ids:
@@ -2991,15 +3010,6 @@ def login(req: LoginRequest):
     token = _create_token(user["id"], user["username"])
     _save_data()
     return {"token": token, "user": user}
-
-
-@app.get("/api/user/profile", tags=["用户"], summary="获取用户资料")
-def get_user_profile(authorization: str = Header(None)):
-    """返回当前登录用户的基本资料（实拍数、获赞数等），需携带 Bearer Token"""
-    user = _require_user(authorization)
-    if not user:
-        return JSONResponse(status_code=401, content={"error": "未登录或登录已过期"})
-    return user
 
 
 @app.post("/api/auth/generate-id", tags=["用户"], summary="生成匿名用户 ID（兼容旧逻辑）")

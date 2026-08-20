@@ -2686,6 +2686,8 @@ function toggleFollowFromNotif(i){
   // 同步个人页关注数
   var pfFollowing=document.getElementById('pfStatFollowing');
   if(pfFollowing)pfFollowing.textContent=getFollowing().length;
+  // 同步到后端
+  api.followUser(actor).then(function(){}).catch(function(){});
   showToast(nowFollowing?'已关注 '+actor:'已取消关注 '+actor);
 }
 function formatTime(ts){
@@ -2767,6 +2769,12 @@ function setAvatarImage(dataUrl){
     if(verified!==(dataUrl||'')){
       console.error('头像保存验证失败');
       return false;
+    }
+    // 同步到后端，让其他用户能看到新头像
+    if(S.loggedIn && dataUrl){
+      api.updateProfile({avatar: dataUrl}).then(function(res){
+        if(!res||!res.ok){console.warn('头像同步后端失败');}
+      }).catch(function(){/* 静默 */});
     }
     return true;
   }catch(e){
@@ -2850,19 +2858,35 @@ function renderProfile(){
   }
   document.getElementById('pfStatFollowers').textContent=getFollowers().length;
   document.getElementById('pfStatFollowing').textContent=getFollowing().length;
+  // 异步从后端获取最新粉丝/关注数（跨用户数据同步）
+  if(S.loggedIn && S.username){
+    api.getUserProfile(S.username).then(function(res){
+      if(res&&res.ok&&res.data){
+        document.getElementById('pfStatFollowers').textContent=res.data.followers_count||0;
+        document.getElementById('pfStatFollowing').textContent=res.data.following_count||0;
+      }
+    }).catch(function(){/* 静默 */});
+  }
 }
 // 打开粉丝/关注列表（自己的）
 function openFollowList(type){
   if(!S.loggedIn){showToast('请先登录');showLoginModal();return;}
   var titleEl=document.getElementById('followListTitle');
   var contentEl=document.getElementById('followListContent');
-  var list=type==='following'?getFollowing():getFollowers();
   titleEl.textContent=type==='following'?'我的关注':'我的粉丝';
-  if(list.length===0){
-    contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">暂无'+(type==='following'?'关注':'粉丝')+'</div>';
-  }else{
+  contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">加载中...</div>';
+  document.getElementById('followListModal').classList.add('show');
+  // 从后端获取粉丝/关注列表（跨用户数据）
+  var apiCall=type==='following'?api.getFollowing(S.username):api.getFollowers(S.username);
+  apiCall.then(function(list){
+    if(!list||!list.length){
+      contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">暂无'+(type==='following'?'关注':'粉丝')+'</div>';
+      return;
+    }
     var html='';
-    list.forEach(function(name){
+    list.forEach(function(item){
+      var name=item.username||'';
+      var avatarUrl=item.avatar||'';
       var following=isFollowing(name);
       var btnHtml='';
       if(name!==S.username){
@@ -2870,11 +2894,12 @@ function openFollowList(type){
           '<button class="nt-action-btn following" onclick="unfollowFromList(this,\''+name.replace(/'/g,"\\'")+'\')">已关注</button>':
           '<button class="nt-action-btn '+(following?'following':'primary')+'" onclick="toggleFollowFromList(this,\''+name.replace(/'/g,"\\'")+'\')">'+(following?'已关注':'+ 关注')+'</button>';
       }
-      html+='<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)"><div onclick="hideFollowListModal();openUserProfile(\''+name.replace(/'/g,"\\'")+'\')" style="width:36px;height:36px;border-radius:50%;background:'+avatarColor('blue')+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;cursor:pointer">'+escHtml(name.charAt(0))+'</div><div onclick="hideFollowListModal();openUserProfile(\''+name.replace(/'/g,"\\'")+'\')" style="flex:1;font-size:14px;font-weight:500;cursor:pointer">'+escHtml(name)+'</div>'+btnHtml+'</div>';
+      html+='<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)"><div onclick="hideFollowListModal();openUserProfile(\''+name.replace(/'/g,"\\'")+'\')" style="width:36px;height:36px;border-radius:50%;overflow:hidden;background:'+avatarColor('blue')+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;cursor:pointer">'+getAvatarInnerHtml(name,'blue',avatarUrl)+'</div><div onclick="hideFollowListModal();openUserProfile(\''+name.replace(/'/g,"\\'")+'\')" style="flex:1;font-size:14px;font-weight:500;cursor:pointer">'+escHtml(name)+'</div>'+btnHtml+'</div>';
     });
     contentEl.innerHTML=html;
-  }
-  document.getElementById('followListModal').classList.add('show');
+  }).catch(function(){
+    contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">加载失败，请稍后重试</div>';
+  });
 }
 function hideFollowListModal(){ document.getElementById('followListModal').classList.remove('show'); }
 function toggleFollowFromList(btn,username){
@@ -2889,11 +2914,15 @@ function toggleFollowFromList(btn,username){
     var upFollowers=document.getElementById('upStatFollowers');
     if(upFollowers)upFollowers.textContent=getFollowersOfUser(S.viewingUser).length;
   }
+  // 同步到后端
+  api.followUser(username).then(function(){}).catch(function(){});
   showToast(nowFollowing?'已关注 '+username:'已取消关注 '+username);
 }
 function unfollowFromList(btn,username){
   setFollowing(username,false);
   document.getElementById('pfStatFollowing').textContent=getFollowing().length;
+  // 同步到后端
+  api.followUser(username).then(function(){}).catch(function(){});
   // 重新渲染列表（移除该项）
   openFollowList('following');
   showToast('已取消关注 '+username);
@@ -3137,9 +3166,20 @@ function renderUserProfile(){
     var owner=f.owner||f.user||'';
     return owner===username;
   }).sort(function(a,b){return b.id-a.id});
-  // 粉丝/关注数：从全局关注图读取真实数据
+  // 粉丝/关注数：先从本地读取（即时显示），再异步从后端获取最新值
   document.getElementById('upStatFollowers').textContent=getFollowersOfUser(username).length;
   document.getElementById('upStatFollowing').textContent=getFollowingOfUser(username).length;
+  // 异步从后端获取最新粉丝/关注数（跨用户数据同步）
+  api.getUserProfile(username).then(function(res){
+    if(res&&res.ok&&res.data){
+      document.getElementById('upStatFollowers').textContent=res.data.followers_count||0;
+      document.getElementById('upStatFollowing').textContent=res.data.following_count||0;
+      // 顺便更新后端返回的头像
+      if(res.data.avatar){
+        avatarEl.innerHTML=getAvatarInnerHtml(username,'blue',res.data.avatar);
+      }
+    }
+  }).catch(function(){/* 静默 */});
   // 关注按钮状态
   var btn=document.getElementById('upFollowBtn');
   if(btn){
@@ -3205,23 +3245,31 @@ function openUserFollowList(type){
   if(!username)return;
   var titleEl=document.getElementById('followListTitle');
   var contentEl=document.getElementById('followListContent');
-  var list=type==='following'?getFollowingOfUser(username):getFollowersOfUser(username);
   titleEl.textContent=username+'的'+(type==='following'?'关注':'粉丝');
-  if(list.length===0){
-    contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">暂无'+(type==='following'?'关注':'粉丝')+'</div>';
-  }else{
+  contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">加载中...</div>';
+  document.getElementById('followListModal').classList.add('show');
+  // 从后端获取粉丝/关注列表（跨用户数据）
+  var apiCall=type==='following'?api.getFollowing(username):api.getFollowers(username);
+  apiCall.then(function(list){
+    if(!list||!list.length){
+      contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">暂无'+(type==='following'?'关注':'粉丝')+'</div>';
+      return;
+    }
     var html='';
-    list.forEach(function(name){
+    list.forEach(function(item){
+      var name=item.username||'';
+      var avatarUrl=item.avatar||'';
       var following=isFollowing(name);
       var btnHtml='';
       if(S.loggedIn&&name!==S.username){
         btnHtml='<button class="nt-action-btn '+(following?'following':'primary')+'" onclick="event.stopPropagation();toggleFollowFromList(this,\''+name.replace(/'/g,"\\'")+'\')">'+(following?'已关注':'+ 关注')+'</button>';
       }
-      html+='<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)"><div onclick="hideFollowListModal();openUserProfile(\''+name.replace(/'/g,"\\'")+'\')" style="width:36px;height:36px;border-radius:50%;background:'+avatarColor('blue')+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;cursor:pointer">'+escHtml(name.charAt(0))+'</div><div onclick="hideFollowListModal();openUserProfile(\''+name.replace(/'/g,"\\'")+'\')" style="flex:1;font-size:14px;font-weight:500;cursor:pointer">'+escHtml(name)+'</div>'+btnHtml+'</div>';
+      html+='<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)"><div onclick="hideFollowListModal();openUserProfile(\''+name.replace(/'/g,"\\'")+'\')" style="width:36px;height:36px;border-radius:50%;overflow:hidden;background:'+avatarColor('blue')+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;cursor:pointer">'+getAvatarInnerHtml(name,'blue',avatarUrl)+'</div><div onclick="hideFollowListModal();openUserProfile(\''+name.replace(/'/g,"\\'")+'\')" style="flex:1;font-size:14px;font-weight:500;cursor:pointer">'+escHtml(name)+'</div>'+btnHtml+'</div>';
     });
     contentEl.innerHTML=html;
-  }
-  document.getElementById('followListModal').classList.add('show');
+  }).catch(function(){
+    contentEl.innerHTML='<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px 0">加载失败，请稍后重试</div>';
+  });
 }
 
 // ===== Login / Register =====
