@@ -1872,8 +1872,17 @@ def _apply_payload(payload: dict, source_label: str):
         loaded_follows = len(follows)
     extras = payload.get("user_extras")
     if isinstance(extras, dict):
-        _USER_EXTRAS.update(extras)
-        loaded_extras = len(extras)
+        # 关键修复：JSON 反序列化后 key 是字符串，需归一为整数 uid，
+        # 否则与用户 uid(int) 查找不匹配，导致重部署后跨用户头像注入失效。
+        norm_extras = {}
+        for k, v in extras.items():
+            try:
+                nk = int(k)
+            except Exception:
+                nk = k
+            norm_extras[nk] = v
+        _USER_EXTRAS.update(norm_extras)
+        loaded_extras = len(norm_extras)
     if loaded_feeds or loaded_users or loaded_follows or loaded_extras:
         print(f"[Persist] 从 {source_label} 加载：{loaded_feeds}条动态 / {loaded_users}个用户 / "
               f"{loaded_follows}组关注 / {loaded_extras}个用户扩展资料")
@@ -2573,8 +2582,95 @@ def mark_notification_read(idx: int):
     return True
 
 
+def _collect_user_avatars():
+    """返回 {int uid: avatar(data URL)}，综合「内存热缓存」与「持久化存储(MySQL)」两份真源。
+
+    修复说明：
+      1) _USER_EXTRAS 经 JSON 反序列化后 key 会变成字符串（"1"），而用户 uid 是整数（1），
+         之前因 str/int 不匹配，导致重新部署/重启后所有跨用户头像注入失效 —— 这是「互相看不见对方头像」的根因。
+         这里统一把 key 归一为 int。
+      2) 内存热缓存保证「当前进程的实时写入」立即可见；MySQL 快照保证「跨 worker / 重部署后」也能互相看见，
+         避免多进程部署下 A 上传头像、B 的读请求落到另一个进程而读不到的问题。
+    """
+    avatars = {}
+    # ① 内存热缓存（实时写入，当前进程内最新）
+    for k, v in _USER_EXTRAS.items():
+        if not isinstance(v, dict):
+            continue
+        try:
+            uid = int(k)
+        except Exception:
+            uid = k
+        av = v.get("avatar", "")
+        if isinstance(av, str) and av.startswith("data:"):
+            avatars[uid] = av
+    # ② 持久化存储（MySQL 跨进程真源，仅 mysql 模式读取）
+    if USER_STORE.mode == "mysql":
+        try:
+            snap = SOCIAL_STORE.read_snapshot()
+            if isinstance(snap, dict):
+                extras = snap.get("user_extras") or {}
+                # 先收集需要还原的 __MEDIA__ 引用（大图被抽到 media_blobs 表）
+                refs = {}
+                for uk, uv in extras.items():
+                    if not isinstance(uv, dict):
+                        continue
+                    av = uv.get("avatar", "")
+                    if isinstance(av, str) and av.startswith("__MEDIA__"):
+                        try:
+                            mid = int(av[len("__MEDIA__"):-len("__")])
+                        except Exception:
+                            mid = None
+                        if mid is not None:
+                            refs[mid] = uk
+                media = {}
+                if refs:
+                    try:
+                        conn = USER_STORE._connect()
+                        with conn.cursor() as cur:
+                            ph = ",".join(["%s"] * len(refs))
+                            cur.execute(
+                                f"SELECT id, data FROM media_blobs WHERE id IN ({ph})",
+                                list(refs.keys()),
+                            )
+                            for row in cur.fetchall():
+                                d = row.get("data")
+                                if isinstance(d, (bytes, bytearray)):
+                                    try:
+                                        d = d.decode("utf-8")
+                                    except Exception:
+                                        d = d.decode("latin-1", "replace")
+                                media[row["id"]] = d
+                        conn.close()
+                    except Exception:
+                        pass
+                for uk, uv in extras.items():
+                    if not isinstance(uv, dict):
+                        continue
+                    try:
+                        uid = int(uk)
+                    except Exception:
+                        uid = uk
+                    av = uv.get("avatar", "")
+                    if isinstance(av, str):
+                        if av.startswith("__MEDIA__"):
+                            mid = int(av[len("__MEDIA__"):-len("__")])
+                            av = media.get(mid) or av
+                        if av.startswith("data:") and uid not in avatars:
+                            avatars[uid] = av
+        except Exception as e:
+            print(f"[avatar] 读持久化头像失败（回退内存缓存）: {e}")
+    return avatars
+
+
 def _build_avatar_map():
-    """构建 username → avatar 映射，用于帖子/评论中显示头像"""
+    """构建 username → avatar(data URL) 映射，用于帖子/评论/他人主页中显示头像。
+
+    关键修复：_USER_EXTRAS 经 JSON 反序列化后 key 会变成字符串，而用户 uid 是整数，
+    之前因 str/int 不匹配导致重新部署/重启后所有跨用户头像注入失效。
+    这里统一按 int uid 归一，并兼容 MySQL 多进程场景（从持久化快照读取最新头像）。
+    """
+    avatars = _collect_user_avatars()  # {int uid: data URL}
     avatar_map = {}
     if USER_STORE.mode == "mysql":
         try:
@@ -2584,17 +2680,14 @@ def _build_avatar_map():
                 rows = cur.fetchall()
             conn.close()
             for row in rows:
-                uid = row["id"]
-                extras = _USER_EXTRAS.get(uid, {})
-                av = extras.get("avatar", "")
+                av = avatars.get(row["id"])
                 if av:
                     avatar_map[row["username"]] = av
         except Exception:
             pass
     else:
         for uid, u in USER_STORE._mem.items():
-            extras = _USER_EXTRAS.get(uid, {})
-            av = extras.get("avatar", "")
+            av = avatars.get(uid)
             if av:
                 avatar_map[u["username"]] = av
     return avatar_map
@@ -2638,6 +2731,15 @@ def get_feed(feed_id: int, authorization: str = Header(None)):
     for f in FEEDS:
         if f["id"] == feed_id:
             feed = copy.deepcopy(f)
+            # 注入作者头像（跨用户可见），与 /api/feeds 保持一致
+            avatar_map = _build_avatar_map()
+            owner = feed.get("owner") or feed.get("user") or ""
+            if owner and owner in avatar_map:
+                feed["avatar"] = avatar_map[owner]
+            for c in feed.get("comments_list", []):
+                cname = c.get("name", "")
+                if cname and cname in avatar_map:
+                    c["avatar"] = avatar_map[cname]
             current_user = _require_user(authorization) if authorization else None
             liked_by = feed.get("liked_by", [])
             if current_user:
@@ -2863,7 +2965,11 @@ def get_user_profile_by_name(username: str):
         return JSONResponse(status_code=404, content={"error": "用户不存在"})
     user_id = target["id"]
     user = USER_STORE.get_by_id(user_id)
+    # 头像从归一化后的内存缓存 + 持久化快照读取，保证重部署/跨进程后也能互相看见
     extras = _USER_EXTRAS.get(user_id, {})
+    avatar = extras.get("avatar", "") if isinstance(extras, dict) else ""
+    if not (isinstance(avatar, str) and avatar.startswith("data:")):
+        avatar = _collect_user_avatars().get(user_id, "")
     following = _FOLLOWS.get(user_id, set())
     followers = set()
     for uid, fset in _FOLLOWS.items():
@@ -2872,7 +2978,7 @@ def get_user_profile_by_name(username: str):
     user_feeds = [f for f in FEEDS if f.get("owner") == user.get("username")]
     return {
         "user": user,
-        "avatar": extras.get("avatar", ""),
+        "avatar": avatar,
         "following_count": len(following),
         "followers_count": len(followers),
         "posts": len(user_feeds),
@@ -2917,14 +3023,15 @@ def get_followers(username: str):
         if user_id in fset:
             followers_ids.add(uid)
     result = []
+    avatars = _collect_user_avatars()
     for uid in followers_ids:
         u = USER_STORE.get_by_id(uid)
         if u:
-            extras = _USER_EXTRAS.get(uid, {})
+            av = avatars.get(uid, "")
             result.append({
                 "id": uid,
                 "username": u["username"],
-                "avatar": extras.get("avatar", ""),
+                "avatar": av,
             })
     return result
 
@@ -2938,14 +3045,15 @@ def get_following(username: str):
     user_id = target["id"]
     following_ids = _FOLLOWS.get(user_id, set())
     result = []
+    avatars = _collect_user_avatars()
     for uid in following_ids:
         u = USER_STORE.get_by_id(uid)
         if u:
-            extras = _USER_EXTRAS.get(uid, {})
+            av = avatars.get(uid, "")
             result.append({
                 "id": uid,
                 "username": u["username"],
-                "avatar": extras.get("avatar", ""),
+                "avatar": av,
             })
     return result
 

@@ -42,3 +42,4 @@ deliverables/backend/_test_weather.py
 overview*.md
 deliverables/*.md
 deliverables/backend/*.md
+deliverables/backend/app_data.json
