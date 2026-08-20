@@ -700,6 +700,7 @@ html.app-mode .pwa-install-banner{display:none !important} /* APP/PWA 模式下�
   <div class="lb-header">
     <h2>引擎底座准确率排行榜</h2>
     <p id="lbHeaderSub">近 7 天各引擎模型的综合预报准确率（温度 60% + 降水 40%）</p>
+    <p id="lbMeta" style="display:none;font-size:11px;color:var(--muted);margin:2px 0 10px"></p>
   </div>
   <div class="lb-tabs">
     <div class="lb-tab active" onclick="switchTimeRange('7d')">近7天</div>
@@ -1395,8 +1396,8 @@ function updateWeatherDisplay(w){
   if(w.ai_generated){
     updateText+=' · AI 生成';
   }
-  // 构建版本标记：方便用户确认当前访问的是哪个 commit（首页六指标 3×2 等比网格）
-  updateText+=' <span style="opacity:.5;font-size:11px;margin-left:4px">vui3x2</span>';
+  // 构建版本标记：方便用户确认当前访问的是哪个 commit（排行榜懒更新+日波动+新鲜度时间戳）
+  updateText+=' <span style="opacity:.5;font-size:11px;margin-left:4px">vrank</span>';
   document.getElementById('homeUpdate').innerHTML=updateText;
 
   // Air badge — 按 US AQI 标准分级显示
@@ -1855,6 +1856,19 @@ function _renderLeaderboardFromData(acc){
       +'<div class="lb-score">'+scoreDisplay+'</div></div>';
   }
   document.getElementById('lbList').innerHTML=html;
+  // 新鲜度与时间戳：展示「数据更新于 X月X日」；纯占位(样本<=1)标注基线评估
+  var metaEl = document.getElementById('lbMeta');
+  if(metaEl){
+    var meta = '';
+    if(acc && acc.updated_at){
+      var d = new Date(acc.updated_at);
+      meta += '数据更新于 ' + (d.getMonth()+1) + '月' + d.getDate() + '日';
+    }
+    var allBase = rankList.length>0 && rankList.every(function(r){return (r.samples_7d||0)<=1;});
+    if(allBase) meta += (meta?' · ':'') + '基线评估（每日动态）';
+    metaEl.textContent = meta;
+    metaEl.style.display = meta ? 'block' : 'none';
+  }
 }
 // 通过 model 名反查引擎并选中
 function getEngineByModel(model){

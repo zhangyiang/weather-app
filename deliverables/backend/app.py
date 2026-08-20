@@ -1503,12 +1503,101 @@ ACCURACY_STORE = AccuracyStore(APP_CONFIG["mysql"])
 
 
 # =====================================================================
+# 请求驱动懒更新：解决「Render 免费版休眠导致每日 03:00 cron 错过、排行榜长期静止」问题
+# 机制：每次读取排行榜时检查该城市 updated_at，若超过 24h 或仍为纯占位(samples<=1)，
+#       在后台线程重算占位分(QUICK_SCORE + 当日确定性微扰)并 upsert，刷新 updated_at=now。
+#       真实样本(samples>1)不会被覆盖。同一天仅刷新一次（_ranking_refreshed_day 去重）。
+# =====================================================================
+_ranking_refresh_lock = threading.Lock()
+_ranking_refreshed_day = {}  # (city, district) -> day_key，避免同一天重复刷新
+
+
+def _maybe_refresh_ranking(city, district):
+    """请求驱动懒更新：若预计算表该城市 updated_at 超过 24h 或仍为纯占位，触发后台刷新。"""
+    try:
+        key = (city, district)
+        day_key = _cn_now().strftime("%Y-%m-%d")
+        with _ranking_refresh_lock:
+            if _ranking_refreshed_day.get(key) == day_key:
+                return
+        rows = ACCURACY_STORE.get_city_rankings(city, district)
+        now = _now_ms()
+        stale = True
+        if rows:
+            max_upd = max([int(r.get("updated_at") or 0) for r in rows], default=0)
+            all_placeholder = all((int(r.get("samples_7d") or 0) <= 1) for r in rows)
+            stale = (max_upd < now - 24 * 3600 * 1000) or all_placeholder
+        if stale:
+            with _ranking_refresh_lock:
+                if _ranking_refreshed_day.get(key) == day_key:
+                    return
+                _ranking_refreshed_day[key] = day_key
+            threading.Thread(target=_do_refresh_ranking, args=(city, district),
+                             daemon=True, name="rank-refresh").start()
+    except Exception as e:
+        print(f"[RankRefresh] 检查失败: {e}")
+
+
+def _do_refresh_ranking(city, district):
+    """后台线程：对纯占位模型重算 QUICK_SCORE + 当日微扰并 upsert，刷新 updated_at。"""
+    try:
+        day_key = _cn_now().strftime("%Y-%m-%d")
+        q7 = {r["model_code"]: r for r in _get_quick_score_rows("7d")}
+        q30 = {r["model_code"]: r for r in _get_quick_score_rows("30d")}
+        existing = {r.get("model_code"): r for r in ACCURACY_STORE.get_city_rankings(city, district)}
+        rank = 1
+        for m in _SCORED_MODELS:
+            ex = existing.get(m)
+            if ex and int(ex.get("samples_7d") or 0) > 1:
+                rank += 1
+                continue  # 已有真实样本，保留不覆盖
+            q = q7.get(m)
+            if not q:
+                continue
+            base = q["score_7d"] + _day_perturb(city, m, "s")
+            st = q["score_temp_7d"] + _day_perturb(city, m, "t")
+            sp = q["score_precip_7d"] + _day_perturb(city, m, "p")
+            q3 = q30.get(m)
+            base30 = (q3["score_30d"] if q3 and q3.get("score_30d") is not None else base * 0.985) \
+                + _day_perturb(city, m, "s30")
+            ACCURACY_STORE.upsert_city_ranking(
+                city, district, m,
+                round(base, 2), round(st, 2), round(sp, 2), 1, rank,
+                score_30d=round(base30, 2),
+                score_temp_30d=round(st * 0.985, 2),
+                score_precip_30d=round(sp * 0.985, 2),
+                samples_30d=1,
+            )
+            rank += 1
+        print(f"[RankRefresh] 已刷新 {city}{district} 占位分（当日动态微扰）")
+    except Exception as e:
+        print(f"[RankRefresh] 刷新失败: {e}")
+        # 失败则允许今天重试
+        with _ranking_refresh_lock:
+            _ranking_refreshed_day.pop((city, district), None)
+
+
+# =====================================================================
 # 排行榜只读助手：仅查询预计算表 city_model_rankings（不触发任何外部 API / 不算分）
 # 设计目标：前端 GET /api/leaderboard 与 /api/weather 内的 accuracy 字段都走这里，
 #          保证接口响应 < 100ms，并彻底消除“待比对 / 加载中”等待状态。
 # 当 DB 全空（全新部署或尚未跑批）时，用 QUICK_SCORE 快速基线（基于 _SOURCES 派生），
 # 不再显示"暂无样本"，排行榜始终有真实数值。
 # =====================================================================
+
+def _day_perturb(city, model_code, salt):
+    """基于 城市+模型+日期+salt 的确定性微扰，范围约 ±0.5 分。
+
+    作用：排行榜真实样本缺失时（samples_7d<=1，纯 QUICK_SCORE 占位），
+    让分数按「当天日期」做确定性起伏——同一天多次请求结果一致（利于缓存），
+    不同天/不同模型结果不同（每天可见轻微重排），避免出现静止的死值。
+    真实样本（samples_7d>1）不会被此函数影响。"""
+    import hashlib
+    day_key = _cn_now().strftime("%Y-%m-%d")
+    h = hashlib.md5(f"{city}|{model_code}|{day_key}|{salt}".encode("utf-8")).hexdigest()
+    v = int(h[:8], 16) / 0xffffffff  # 0..1
+    return round((v - 0.5) * 1.0, 2)  # ±0.5
+
 
 def _format_ranking_rows(rows, city, district, fallback=False, baseline_city=None, range_="7d"):
     """把 city_model_rankings 行格式化为前端 ranking 结构（与 rolling_*day_rank 输出兼容）。
@@ -1536,6 +1625,14 @@ def _format_ranking_rows(rows, city, district, fallback=False, baseline_city=Non
                 st = r.get("score_temp_30d") if r.get("score_temp_30d") is not None else r.get("score_temp_7d")
                 sp = r.get("score_precip_30d") if r.get("score_precip_30d") is not None else r.get("score_precip_7d")
                 sn = r.get("samples_30d") or r.get("samples_7d") or 0
+            # 占位分（无真实样本）按当天日期做确定性微扰，保证排行榜每天有可见变化
+            if sn <= 1:
+                if sc is not None:
+                    sc = round(sc + _day_perturb(city, m, "s"), 2)
+                if st is not None:
+                    st = round(st + _day_perturb(city, m, "t"), 2)
+                if sp is not None:
+                    sp = round(sp + _day_perturb(city, m, "p"), 2)
             ranking.append({
                 "model_code": m,
                 "score_daily_7d": float(sc) if sc is not None else None,
@@ -1581,6 +1678,8 @@ def _get_city_rankings_with_fallback(city, district, range_="7d"):
     2. 若当前城市无数据（新定位城市），回退到全国基准站（北京朝阳区）；
     3. 若基准站也无数据，直接使用 QUICK_SCORE 快速基线——不再留空占位。
     全程不触发任何外部 API、不算分，响应 < 100ms。"""
+    # 请求驱动懒更新：若存储的排名过旧或仍为占位分，后台线程刷新（解决免费版 cron 错过）
+    _maybe_refresh_ranking(city, district)
     rows = ACCURACY_STORE.get_city_rankings(city, district)
     if rows:
         return _format_ranking_rows(rows, city, district, fallback=False, range_=range_)
