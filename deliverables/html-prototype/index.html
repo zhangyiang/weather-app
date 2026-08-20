@@ -2914,15 +2914,33 @@ function toggleFollowFromList(btn,username){
     var upFollowers=document.getElementById('upStatFollowers');
     if(upFollowers)upFollowers.textContent=getFollowersOfUser(S.viewingUser).length;
   }
-  // 同步到后端
-  api.followUser(username).then(function(){}).catch(function(){});
+  // 同步到后端，成功后校正当前主页粉丝数
+  api.followUser(username).then(function(res){
+    if(res&&res.ok&&S.viewingUser){
+      api.getUserProfile(S.viewingUser).then(function(r){
+        if(r&&r.ok&&r.data){
+          var uf=document.getElementById('upStatFollowers');
+          if(uf)uf.textContent=r.data.followers_count||0;
+        }
+      });
+    }
+  }).catch(function(){});
   showToast(nowFollowing?'已关注 '+username:'已取消关注 '+username);
 }
 function unfollowFromList(btn,username){
   setFollowing(username,false);
   document.getElementById('pfStatFollowing').textContent=getFollowing().length;
-  // 同步到后端
-  api.followUser(username).then(function(){}).catch(function(){});
+  // 同步到后端，成功后校正当前主页粉丝数
+  api.followUser(username).then(function(res){
+    if(res&&res.ok&&S.viewingUser){
+      api.getUserProfile(S.viewingUser).then(function(r){
+        if(r&&r.ok&&r.data){
+          var uf=document.getElementById('upStatFollowers');
+          if(uf)uf.textContent=r.data.followers_count||0;
+        }
+      });
+    }
+  }).catch(function(){});
   // 重新渲染列表（移除该项）
   openFollowList('following');
   showToast('已取消关注 '+username);
@@ -3233,9 +3251,18 @@ function toggleFollowViewingUser(){
   // 更新当前被关注者的粉丝数显示
   var upFollowers=document.getElementById('upStatFollowers');
   if(upFollowers)upFollowers.textContent=getFollowersOfUser(username).length;
-  // 同步后端
+  // 同步后端，成功后重新获取最新粉丝数校正
   api.followUser(username).then(function(res){
-    if(!res||!res.ok){console.warn('followUser failed',res&&res.status);}
+    if(!res||!res.ok){console.warn('followUser failed',res&&res.status);return;}
+    // 后端成功后重新获取该用户最新粉丝/关注数，避免竞态覆盖
+    api.getUserProfile(username).then(function(r){
+      if(r&&r.ok&&r.data){
+        var uf=document.getElementById('upStatFollowers');
+        if(uf)uf.textContent=r.data.followers_count||0;
+        var ufg=document.getElementById('upStatFollowing');
+        if(ufg)ufg.textContent=r.data.following_count||0;
+      }
+    });
   }).catch(function(){/* 静默 */});
   showToast(nowFollowing?'已关注 '+username:'已取消关注 '+username);
 }
