@@ -1626,13 +1626,14 @@ def _format_ranking_rows(rows, city, district, fallback=False, baseline_city=Non
                 sp = r.get("score_precip_30d") if r.get("score_precip_30d") is not None else r.get("score_precip_7d")
                 sn = r.get("samples_30d") or r.get("samples_7d") or 0
             # 占位分（无真实样本）按当天日期做确定性微扰，保证排行榜每天有可见变化
+            # 注意：MySQL DECIMAL 列读出为 decimal.Decimal，须先转 float 才能与微扰值相加
             if sn <= 1:
                 if sc is not None:
-                    sc = round(sc + _day_perturb(city, m, "s"), 2)
+                    sc = round(float(sc) + _day_perturb(city, m, "s"), 2)
                 if st is not None:
-                    st = round(st + _day_perturb(city, m, "t"), 2)
+                    st = round(float(st) + _day_perturb(city, m, "t"), 2)
                 if sp is not None:
-                    sp = round(sp + _day_perturb(city, m, "p"), 2)
+                    sp = round(float(sp) + _day_perturb(city, m, "p"), 2)
             ranking.append({
                 "model_code": m,
                 "score_daily_7d": float(sc) if sc is not None else None,
