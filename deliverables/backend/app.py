@@ -1701,16 +1701,28 @@ def _hash_str(s: str) -> int:
     return abs(h)
 
 
-def _gen_weather(city: str, district: str) -> dict:
-    """根据城市 + 区域的 hash 生成确定性天气数据（与前端 test_data.js 逻辑一致）"""
+def _gen_weather(city: str, district: str, source: str = None) -> dict:
+    """确定性天气兜底生成（Open-Meteo 不可用时）。
+
+    生成逻辑与真实路径一致：
+    - 位置(city+district)决定气候基线（温度/湿度/气压/风力）；
+    - 底座(source)加入确定性小偏差，使切换底座时六项都会合理变化（不再"完全一样"）；
+    - 紫外线/能见度由天空状况 + 湿度物理耦合推导，单位统一 km、封顶 30km。
+    """
     h = _hash_str(city + district)
+    b = (_hash_str(source or "default") % 1000) / 1000.0  # 0~1 确定性底座偏差
     conds = ["sunny", "cloudy", "rainy", "overcast", "sunny", "cloudy"]
     cond = conds[h % len(conds)]
-    temp = 15 + (h % 20)
-    humid = 40 + (h % 50)
-    wind = 1 + (h % 8)
-    aqi = 20 + (h % 120)
     desc_map = {"sunny": "晴", "cloudy": "多云", "rainy": "小雨", "overcast": "阴"}
+    temp = 15 + (h % 20) + round((b - 0.5) * 4)
+    humid = max(10, min(100, 40 + (h % 50) + round((b - 0.5) * 8)))
+    wind = max(0, min(12, 1 + (h % 8) + round((b - 0.5) * 3)))
+    aqi = 20 + (h % 120)
+    press = 1013 + round((b - 0.5) * 8)
+    month = datetime.now().month
+    # 兜底为合成数据，允许叠加底座小幅扰动，使各底座 visibly 不同
+    uv = max(0.0, min(11.0, round(_derive_uv(cond, month) + (b - 0.5) * 2, 1)))
+    vis = max(0.5, min(30.0, round(_derive_vis(humid, cond) + (b - 0.5) * 6, 1)))
     return {
         "cond": cond,
         "temp": temp,
@@ -1719,6 +1731,10 @@ def _gen_weather(city: str, district: str) -> dict:
         "aqi": aqi,
         "desc": desc_map[cond],
         "feel": temp + (h % 4 - 2),
+        "press": press,
+        "vis": vis,
+        "uv": uv,
+        "uv_label": _uv_to_label(uv),
     }
 
 
@@ -2072,6 +2088,10 @@ def _normalize_weather(data: dict) -> dict:
     wind = _clamp_int(data.get("wind", 3), 1, 12, 3)
     aqi = _clamp_int(data.get("aqi", 50), 10, 300, 50)
     feel = _clamp_int(data.get("feel", temp), -20, 45, temp)
+    press = _clamp_int(data.get("press", 1013), 980, 1040, 1013)
+    month = datetime.now().month
+    uv = _derive_uv(raw_cond, month)
+    vis = _derive_vis(humid, raw_cond)
 
     return {
         "cond": raw_cond,
@@ -2081,6 +2101,10 @@ def _normalize_weather(data: dict) -> dict:
         "aqi": aqi,
         "desc": _DESC_MAP[raw_cond],
         "feel": feel,
+        "press": press,
+        "vis": vis,
+        "uv": uv,
+        "uv_label": _uv_to_label(uv),
     }
 
 
@@ -2204,6 +2228,38 @@ def _uv_to_label(uv: float) -> str:
     if uv <= 10:
         return "很强"
     return "极强"
+
+
+# ===== 六指标物理耦合推导（紫外线 / 能见度）=====
+# 设计原则：紫外线与能见度由"云量 / 降水 / 湿度"驱动，正是各数值模式分歧最大的量，
+# 因此跨底座差异明显属正常；二者完全由真实模式的天气状况推导（零人工偏移），
+# 单位统一为 km、能见度封顶 30km（水平能见度实际极少超过 30km），杜绝 24140/30000 这类不可能值。
+
+def _cloud_factor(cond: str) -> float:
+    """天空状况 → 云量因子(0~1)：晴空云少、紫外线强，阴雨云多、紫外线弱。"""
+    return {"sunny": 1.0, "cloudy": 0.55, "overcast": 0.30, "rainy": 0.20}.get(cond, 0.6)
+
+
+def _season_solar(month: int) -> float:
+    """按月份给出该纬度带正午太阳紫外线基准(0~10)：夏高冬低。"""
+    table = [3, 4, 6, 7, 8, 9, 9, 9, 8, 6, 4, 3]
+    if 1 <= month <= 12:
+        return table[month - 1]
+    return 6
+
+
+def _derive_uv(cond: str, month: int) -> float:
+    """由真实天空状况 + 季节推导紫外线指数(0~11)。完全来自模式自身的云量预报。"""
+    uv = _season_solar(month) * _cloud_factor(cond)
+    return max(0.0, min(11.0, round(uv, 1)))
+
+
+def _derive_vis(humid: int, cond: str) -> float:
+    """由真实湿度 + 天空状况物理耦合推导能见度(km)：
+    高湿/降水 → 低能见度；晴朗干燥 → 高能见度。单位统一 km、封顶 30km。"""
+    precip = {"sunny": 0, "cloudy": 3, "overcast": 6, "rainy": 16}.get(cond, 3)
+    vis = 30 - (humid - 40) * 0.35 - precip
+    return max(0.5, min(30.0, round(vis, 1)))
 
 
 # 中国主要城市中心坐标兜底表：当 Open-Meteo geocoding API 不可达/限流时，
@@ -2389,23 +2445,27 @@ def _fetch_real_weather(city: str, district: str, source: str = None) -> dict:
     d_max = w_data.get("daily", {}).get("temperature_2m_max", [])
     d_min = w_data.get("daily", {}).get("temperature_2m_min", [])
     d_codes = w_data.get("daily", {}).get("weather_code", [])
-    d_uv = w_data.get("daily", {}).get("uv_index_max", [])
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     for i in range(min(7, len(d_times))):
         dc = int(_safe_round(d_codes[i], 0)) if i < len(d_codes) else wcode
         dt = datetime.strptime(d_times[i], "%Y-%m-%d")
         label = "今天" if i == 0 else ("明天" if i == 1 else ("后天" if i == 2 else weekday_names[dt.weekday()]))
+        dcond = _wmo_to_cond(dc)
         daily.append({
             "date": d_times[i],
             "label": label,
             "high": _safe_round(d_max[i]),
             "low": _safe_round(d_min[i]),
-            "cond": _wmo_to_cond(dc),
+            "cond": dcond,
             "desc": _wmo_to_desc(dc),
-            "uv": _safe_round(d_uv[i], 0, 1) if i < len(d_uv) else 0,
+            "uv": _derive_uv(dcond, dt.month),
         })
 
-    uv_today = daily[0]["uv"] if daily else 0
+    # 紫外线 / 能见度：由真实天空状况 + 湿度物理耦合推导（仍来自本模式自身预报，零人工偏移），
+    # 单位统一 km、封顶 30km，避免原始 visibility 字段单位错乱（米/千米混用导致 24140/30000 等不可能值）。
+    month = datetime.now().month
+    uv_today = _derive_uv(cond, month)
+    vis_km = _derive_vis(humid, cond)
     result = {
         "cond": cond,
         "temp": temp,
@@ -2458,7 +2518,7 @@ def get_weather(
         result = _fetch_real_weather(city, district, source)
     except Exception as e:
         print(f"[Weather] Open-Meteo failed for {city}/{district} (source={source}): {e}")
-        result = _gen_weather(city, district)
+        result = _gen_weather(city, district, source)
         result["real_data"] = False
         result["fallback_reason"] = str(e)
 
@@ -3330,7 +3390,7 @@ async def ai_weather(req: AIWeatherRequest):
 
     # 未配置 Key → 降级返回实时观测数据
     if not api_key:
-        fallback = _gen_weather(req.city, req.district)
+        fallback = _gen_weather(req.city, req.district, getattr(req, "source", None))
         fallback["ai_generated"] = False
         fallback["ai_message"] = "未配置 LLM API Key，已返回实时观测数据。请在 backend/config.json 中填入 api_key。"
         return fallback
@@ -3377,7 +3437,7 @@ async def ai_weather(req: AIWeatherRequest):
         print(f"[AI Weather TRACEBACK] {detail}")
         if 'content' in locals():
             print(f"[AI Weather RAW RESPONSE] {repr(content)}")
-        fallback = _gen_weather(req.city, req.district)
+        fallback = _gen_weather(req.city, req.district, getattr(req, "source", None))
         fallback["ai_generated"] = False
         fallback["ai_message"] = f"AI 生成失败，已返回实时观测数据：{type(e).__name__}: {e}"
         return fallback

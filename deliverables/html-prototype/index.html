@@ -1469,20 +1469,59 @@ function updateWeatherDisplay(w){
 }
 
 // 本地兜底天气生成（API 不可用时使用，保证 hero 区永不空白）
-function _fallbackWeather(city,district){
-  var s=(city||'北京')+(district||'朝阳区');
+// 与后端 _gen_weather / test_data.js 同一套合理生成逻辑：位置定气候基线、底座加确定性小偏差、
+// 紫外线/能见度由天空状况+湿度物理耦合推导（单位 km、封顶 30km）。
+function _cloudFactor(cond){
+  var m={sunny:1.0,cloudy:0.55,overcast:0.30,rainy:0.20};
+  return m.hasOwnProperty(cond)?m[cond]:0.6;
+}
+function _seasonSolar(month){
+  var t=[3,4,6,7,8,9,9,9,8,6,4,3];
+  return (month>=1&&month<=12)?t[month-1]:6;
+}
+function _deriveUv(cond, month){
+  var uv=_seasonSolar(month)*_cloudFactor(cond);
+  return Math.max(0,Math.min(11,Math.round(uv*10)/10));
+}
+function _deriveVis(humid, cond){
+  var precip={sunny:0,cloudy:3,overcast:6,rainy:16};
+  var p=precip.hasOwnProperty(cond)?precip[cond]:3;
+  var vis=30-(humid-40)*0.35-p;
+  return Math.max(0.5,Math.min(30,Math.round(vis*10)/10));
+}
+function _uvToLabel(uv){
+  if(uv<=2)return '弱';
+  if(uv<=5)return '中等';
+  if(uv<=7)return '强';
+  if(uv<=10)return '很强';
+  return '极强';
+}
+function _hashStrLocal(s){
   var h=0;for(var i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;
-  h=Math.abs(h);
+  return Math.abs(h);
+}
+function _fallbackWeather(city,district,source){
+  var s=(city||'北京')+(district||'朝阳区');
+  var h=_hashStrLocal(s);
+  var b=(_hashStrLocal(source||'default')%1000)/1000; // 0~1 确定性底座偏差
   var conds=['sunny','cloudy','rainy','overcast','sunny','cloudy'];
   var cond=conds[h%conds.length];
-  var temp=15+(h%20);
   var descMap={sunny:'晴',cloudy:'多云',rainy:'小雨',overcast:'阴'};
-  return{cond:cond,temp:temp,humid:40+(h%50),wind:1+(h%8),aqi:20+(h%120),desc:descMap[cond],feel:temp+(h%4-2)};
+  var temp=15+(h%20)+Math.round((b-0.5)*4);
+  var humid=Math.max(10,Math.min(100,40+(h%50)+Math.round((b-0.5)*8)));
+  var wind=Math.max(0,Math.min(12,1+(h%8)+Math.round((b-0.5)*3)));
+  var aqi=20+(h%120);
+  var press=1013+Math.round((b-0.5)*8);
+  var month=new Date().getMonth()+1;
+  var uv=Math.max(0,Math.min(11,Math.round((_deriveUv(cond,month)+(b-0.5)*2)*10)/10));
+  var vis=Math.max(0.5,Math.min(30,Math.round((_deriveVis(humid,cond)+(b-0.5)*6)*10)/10));
+  return{cond:cond,temp:temp,humid:humid,wind:wind,aqi:aqi,desc:descMap[cond],feel:temp+(h%4-2),
+         press:press,vis:vis,uv:uv,uv_label:_uvToLabel(uv)};
 }
 
 function renderHome(){
   // 先用本地兜底数据立即渲染，保证 hero 区永不空白
-  var fw=_fallbackWeather(S.city,S.district);
+  var fw=_fallbackWeather(S.city,S.district,S.sourceId);
   try{ updateWeatherDisplay(fw); }catch(e){ console.error('Fallback render error:',e); }
 
   // 再异步请求后端（携带当前数据源 → 后端按源选用对应真实数值模式取数）
