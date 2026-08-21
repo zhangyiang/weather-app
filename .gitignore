@@ -1,6 +1,8 @@
 # ===== Secrets (never commit) =====
 deliverables/backend/config.json
 deliverables/backend/config.*.json
+# 例外：配置示例不含真实密钥，可公开发布供协作者参考
+!deliverables/backend/config.example.json
 
 # ===== Python / local env =====
 __pycache__/

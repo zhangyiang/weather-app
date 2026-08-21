@@ -1,0 +1,19 @@
+{
+  "_说明": "本地配置示例。请复制为 config.json 并填入真实值；云部署请改用环境变量（见 deploy/部署指南.md）。",
+  "llm_api_key": "",
+  "llm_base_url": "https://api.siliconflow.cn/v1",
+  "llm_model": "Qwen/Qwen2.5-7B-Instruct",
+  "llm_timeout": 30,
+
+  "jwt_secret": "请在本地改成随机长字符串（云部署用 JWT_SECRET 环境变量）",
+  "jwt_expire_hours": 168,
+
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "weather_app",
+    "charset": "utf8mb4"
+  }
+}

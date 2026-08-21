@@ -1,7 +1,8 @@
 """验证脚本：用本地坐标(北京)实测 timezone=auto 是否生效、四大模型温度是否合理、
 以及准确率评分链路是否有数据空洞。"""
-import sys, json
-sys.path.insert(0, ".")
+import sys, json, os
+# 脚本位于仓库根 tests/，需把 backend 目录加入导入路径才能 import app
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "deliverables", "backend"))
 import app as app_mod
 
 _URL = "https://api.open-meteo.com/v1/forecast"
